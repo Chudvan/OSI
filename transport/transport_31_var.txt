@@ -1,0 +1,197 @@
+T_INIT.REQ
+
+integer declare addr
+integer declare state
+integer declare con_timer
+integer declare con_try
+integer declare con_limit
+integer declare delay_time
+integer declare last_received
+integer declare last_sent
+integer declare calcCrc
+integer declare packageNumber
+integer declare packageType
+integer declare packageCrc
+buffer declare packageBuffer 
+buffer declare data 
+
+1 setto state
+3 setto con_limit
+20 setto delay_time
+0 setto last_received
+0 setto last_sent
+0 setto packageNumber
+
+---
+
+N_DATAGRAM.IND
+
+;параметры:  address (число), userdata (буфер)
+;Распаковываем и проверяем CRC
+userdata unbufferit  packageCrc 1 packageBuffer (sizeof(userdata) - 1) 
+varcrc calcCrc $packageBuffer 
+($calcCrc != $packageCrc) if Сorrupted
+;Вычленяем packageType
+packageBuffer unbufferit  packageType 1 
+($packageType == 1) if ConInd
+($packageType == 2) && ($state == 2) if ConConf
+($packageType == 3) && ($state != 1) if DConReq
+($packageType == 4) if DataInd
+goto Exit
+
+Сorrupted:
+	goto Exit
+
+ConInd:
+	($state == 1) if ConInd1
+	($state == 6) if ConInd6
+	goto Exit
+	ConInd1:
+		5 setto state
+		sendup address $address T_CONNECT.IND
+		$address setto addr
+		goto Exit
+	ConInd6:
+		;Формируем пакет для соединения (packageType==2)
+		packageBuffer pack 2 1 1
+		varcrc packageCrc $packageBuffer 
+		packageBuffer pack $packageCrc 1 $packageBuffer sizeof(packageBuffer)  (sizeof(packageBuffer) + 1)
+		;Посылаем
+		address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+		address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+		address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+		goto Exit
+
+ConConf:
+	3 setto state
+	sendup address $address T_CONNECT.CONF
+	untimer $con_timer
+	goto Exit
+
+DConReq:
+	1 setto state
+	sendup T_DISCONNECT.IND
+	goto Exit
+
+DataInd:
+	8 setto state
+	;Вычленяем тип, № пакета и данные
+	packageBuffer unbufferit  packageType 1 packageNumber 1 data (sizeof(packageBuffer) - 2)
+	;Проверяем номер принятого пакета
+	($packageNumber <= $last_received) if dublicate
+	$packageNumber setto last_received
+	sendup userdata $data T_DATA.IND
+	goto Exit
+	dublicate:
+		goto Exit
+
+Exit:
+
+---
+
+T_CONNECT.REQ
+
+;параметры:  address (число)
+2 setto state
+1 setto con_try
+;Формируем пакет для соединения (packageType==1)
+packageBuffer pack 1 1 1
+varcrc packageCrc $packageBuffer 
+packageBuffer pack $packageCrc 1 $packageBuffer sizeof(packageBuffer)  (sizeof(packageBuffer) + 1)
+;Шлем его
+address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+;Сохраняем адрес и устанавливаем таймер
+$address setto addr
+timeevent CONTIMER con_timer (2 * $delay_time + 1) address $address
+
+---
+
+T_CONNECT.RESP
+
+;параметры:  address (число)
+6 setto state
+;Формируем пакет для соединения (packageType==2)
+packageBuffer pack 2 1 1
+varcrc packageCrc $packageBuffer 
+packageBuffer pack $packageCrc 1 $packageBuffer sizeof(packageBuffer)  (sizeof(packageBuffer) + 1)
+;Посылаем
+address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+
+---
+
+T_DATA.REQ
+
+;параметры:   userdata (буфер)
+4 setto state
+; увеличиваем номер исходящего пакета
+($last_sent + 1) setto last_sent
+; формируем исходящий БДП
+packageBuffer pack 4 1 $last_sent 1 $userdata sizeof(userdata) (sizeof(userdata) + 2)
+varcrc packageCrc $packageBuffer 
+packageBuffer pack $packageCrc 1 $packageBuffer sizeof(packageBuffer) (sizeof(userdata) + 3)
+;Шлём его
+address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+;Сохраняем адрес
+$address setto addr
+
+---
+
+T_DISCONNECT.REQ
+
+;параметры:  address (число)
+1 setto state
+;Формируем пакет для соединения (packageType==3)
+packageBuffer pack 3 1 1
+varcrc packageCrc $packageBuffer 
+packageBuffer pack $packageCrc 1 $packageBuffer sizeof(packageBuffer)  (sizeof(packageBuffer) + 1)
+;Посылаем
+address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+
+---
+
+CONTIMER
+
+; увеличиваем количество попыток соединения
+$con_try + 1 setto con_try
+; попытки соединения кончились?
+$con_try > $con_limit if over
+goto state2
+
+state2:
+	;Формируем пакет для соединения (packageType==1)
+	packageBuffer pack 1 1 1
+	varcrc packageCrc $packageBuffer 
+	packageBuffer pack $packageCrc 1 $packageBuffer sizeof(packageBuffer)  (sizeof(packageBuffer) + 1)
+	;Шлем его
+	address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+	address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+	address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+
+	;Устанавливаем таймер
+	timeevent CONTIMER con_timer (2 * $delay_time + 1) address $address
+	goto Exit
+
+over:
+	1 setto state
+	;Формируем пакет для соединения (packageType==3)
+	packageBuffer pack 3 1 1
+	varcrc packageCrc $packageBuffer 
+	packageBuffer pack $packageCrc 1 $packageBuffer sizeof(packageBuffer)  (sizeof(packageBuffer) + 1)
+	;Посылаем
+	address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+	address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+	address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+	; Оповещаем сеансовый уровень о дисконнекте
+	sendup T_DISCONNECT.IND
+	untimer $con_timer
+
+Exit:
