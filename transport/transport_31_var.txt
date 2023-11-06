@@ -1,4 +1,4 @@
-T_INIT.REQ
+п»їT_INIT.REQ
 
 integer declare addr
 integer declare state
@@ -26,12 +26,12 @@ buffer declare data
 
 N_DATAGRAM.IND
 
-;параметры:  address (число), userdata (буфер)
-;Распаковываем и проверяем CRC
+;РїР°СЂР°РјРµС‚СЂС‹:  address (С‡РёСЃР»Рѕ), userdata (Р±СѓС„РµСЂ)
+;Р Р°СЃРїР°РєРѕРІС‹РІР°РµРј Рё РїСЂРѕРІРµСЂСЏРµРј CRC
 userdata unbufferit  packageCrc 1 packageBuffer (sizeof(userdata) - 1) 
 varcrc calcCrc $packageBuffer 
-($calcCrc != $packageCrc) if Сorrupted
-;Вычленяем packageType
+($calcCrc != $packageCrc) if РЎorrupted
+;Р’С‹С‡Р»РµРЅСЏРµРј packageType
 packageBuffer unbufferit  packageType 1 
 ($packageType == 1) if ConInd
 ($packageType == 2) && ($state == 2) if ConConf
@@ -39,7 +39,7 @@ packageBuffer unbufferit  packageType 1
 ($packageType == 4) if DataInd
 goto Exit
 
-Сorrupted:
+РЎorrupted:
 	goto Exit
 
 ConInd:
@@ -52,11 +52,11 @@ ConInd:
 		$address setto addr
 		goto Exit
 	ConInd6:
-		;Формируем пакет для соединения (packageType==2)
+		;Р¤РѕСЂРјРёСЂСѓРµРј РїР°РєРµС‚ РґР»СЏ СЃРѕРµРґРёРЅРµРЅРёСЏ (packageType==2)
 		packageBuffer pack 2 1 1
 		varcrc packageCrc $packageBuffer 
 		packageBuffer pack $packageCrc 1 $packageBuffer sizeof(packageBuffer)  (sizeof(packageBuffer) + 1)
-		;Посылаем
+		;РџРѕСЃС‹Р»Р°РµРј
 		address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 		address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 		address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
@@ -75,9 +75,9 @@ DConReq:
 
 DataInd:
 	8 setto state
-	;Вычленяем тип, № пакета и данные
+	;Р’С‹С‡Р»РµРЅСЏРµРј С‚РёРї, в„– РїР°РєРµС‚Р° Рё РґР°РЅРЅС‹Рµ
 	packageBuffer unbufferit  packageType 1 packageNumber 1 data (sizeof(packageBuffer) - 2)
-	;Проверяем номер принятого пакета
+	;РџСЂРѕРІРµСЂСЏРµРј РЅРѕРјРµСЂ РїСЂРёРЅСЏС‚РѕРіРѕ РїР°РєРµС‚Р°
 	($packageNumber <= $last_received) if dublicate
 	$packageNumber setto last_received
 	sendup userdata $data T_DATA.IND
@@ -91,18 +91,18 @@ Exit:
 
 T_CONNECT.REQ
 
-;параметры:  address (число)
+;РїР°СЂР°РјРµС‚СЂС‹:  address (С‡РёСЃР»Рѕ)
 2 setto state
 1 setto con_try
-;Формируем пакет для соединения (packageType==1)
+;Р¤РѕСЂРјРёСЂСѓРµРј РїР°РєРµС‚ РґР»СЏ СЃРѕРµРґРёРЅРµРЅРёСЏ (packageType==1)
 packageBuffer pack 1 1 1
 varcrc packageCrc $packageBuffer 
 packageBuffer pack $packageCrc 1 $packageBuffer sizeof(packageBuffer)  (sizeof(packageBuffer) + 1)
-;Шлем его
+;РЁР»РµРј РµРіРѕ
 address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
-;Сохраняем адрес и устанавливаем таймер
+;РЎРѕС…СЂР°РЅСЏРµРј Р°РґСЂРµСЃ Рё СѓСЃС‚Р°РЅР°РІР»РёРІР°РµРј С‚Р°Р№РјРµСЂ
 $address setto addr
 timeevent CONTIMER con_timer (2 * $delay_time + 1) address $address
 
@@ -110,13 +110,13 @@ timeevent CONTIMER con_timer (2 * $delay_time + 1) address $address
 
 T_CONNECT.RESP
 
-;параметры:  address (число)
+;РїР°СЂР°РјРµС‚СЂС‹:  address (С‡РёСЃР»Рѕ)
 6 setto state
-;Формируем пакет для соединения (packageType==2)
+;Р¤РѕСЂРјРёСЂСѓРµРј РїР°РєРµС‚ РґР»СЏ СЃРѕРµРґРёРЅРµРЅРёСЏ (packageType==2)
 packageBuffer pack 2 1 1
 varcrc packageCrc $packageBuffer 
 packageBuffer pack $packageCrc 1 $packageBuffer sizeof(packageBuffer)  (sizeof(packageBuffer) + 1)
-;Посылаем
+;РџРѕСЃС‹Р»Р°РµРј
 address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
@@ -125,33 +125,33 @@ address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 
 T_DATA.REQ
 
-;параметры:   userdata (буфер)
+;РїР°СЂР°РјРµС‚СЂС‹:   userdata (Р±СѓС„РµСЂ)
 4 setto state
-; увеличиваем номер исходящего пакета
+; СѓРІРµР»РёС‡РёРІР°РµРј РЅРѕРјРµСЂ РёСЃС…РѕРґСЏС‰РµРіРѕ РїР°РєРµС‚Р°
 ($last_sent + 1) setto last_sent
-; формируем исходящий БДП
+; С„РѕСЂРјРёСЂСѓРµРј РёСЃС…РѕРґСЏС‰РёР№ Р‘Р”Рџ
 packageBuffer pack 4 1 $last_sent 1 $userdata sizeof(userdata) (sizeof(userdata) + 2)
 varcrc packageCrc $packageBuffer 
 packageBuffer pack $packageCrc 1 $packageBuffer sizeof(packageBuffer) (sizeof(userdata) + 3)
-;Шлём его
+;РЁР»С‘Рј РµРіРѕ
 address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
-;Сохраняем адрес
+;РЎРѕС…СЂР°РЅСЏРµРј Р°РґСЂРµСЃ
 $address setto addr
 
 ---
 
 T_DISCONNECT.REQ
 
-;параметры:  address (число)
+;РїР°СЂР°РјРµС‚СЂС‹:  address (С‡РёСЃР»Рѕ)
 1 setto state
-;Формируем пакет для соединения (packageType==3)
+;Р¤РѕСЂРјРёСЂСѓРµРј РїР°РєРµС‚ РґР»СЏ СЃРѕРµРґРёРЅРµРЅРёСЏ (packageType==3)
 packageBuffer pack 3 1 1
 varcrc packageCrc $packageBuffer 
 packageBuffer pack $packageCrc 1 $packageBuffer sizeof(packageBuffer)  (sizeof(packageBuffer) + 1)
-;Посылаем
+;РџРѕСЃС‹Р»Р°РµРј
 address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
@@ -160,37 +160,37 @@ address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 
 CONTIMER
 
-; увеличиваем количество попыток соединения
+; СѓРІРµР»РёС‡РёРІР°РµРј РєРѕР»РёС‡РµСЃС‚РІРѕ РїРѕРїС‹С‚РѕРє СЃРѕРµРґРёРЅРµРЅРёСЏ
 $con_try + 1 setto con_try
-; попытки соединения кончились?
+; РїРѕРїС‹С‚РєРё СЃРѕРµРґРёРЅРµРЅРёСЏ РєРѕРЅС‡РёР»РёСЃСЊ?
 $con_try > $con_limit if over
 goto state2
 
 state2:
-	;Формируем пакет для соединения (packageType==1)
+	;Р¤РѕСЂРјРёСЂСѓРµРј РїР°РєРµС‚ РґР»СЏ СЃРѕРµРґРёРЅРµРЅРёСЏ (packageType==1)
 	packageBuffer pack 1 1 1
 	varcrc packageCrc $packageBuffer 
 	packageBuffer pack $packageCrc 1 $packageBuffer sizeof(packageBuffer)  (sizeof(packageBuffer) + 1)
-	;Шлем его
+	;РЁР»РµРј РµРіРѕ
 	address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 	address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 	address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 
-	;Устанавливаем таймер
+	;РЈСЃС‚Р°РЅР°РІР»РёРІР°РµРј С‚Р°Р№РјРµСЂ
 	timeevent CONTIMER con_timer (2 * $delay_time + 1) address $address
 	goto Exit
 
 over:
 	1 setto state
-	;Формируем пакет для соединения (packageType==3)
+	;Р¤РѕСЂРјРёСЂСѓРµРј РїР°РєРµС‚ РґР»СЏ СЃРѕРµРґРёРЅРµРЅРёСЏ (packageType==3)
 	packageBuffer pack 3 1 1
 	varcrc packageCrc $packageBuffer 
 	packageBuffer pack $packageCrc 1 $packageBuffer sizeof(packageBuffer)  (sizeof(packageBuffer) + 1)
-	;Посылаем
+	;РџРѕСЃС‹Р»Р°РµРј
 	address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 	address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 	address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
-	; Оповещаем сеансовый уровень о дисконнекте
+	; РћРїРѕРІРµС‰Р°РµРј СЃРµР°РЅСЃРѕРІС‹Р№ СѓСЂРѕРІРµРЅСЊ Рѕ РґРёСЃРєРѕРЅРЅРµРєС‚Рµ
 	sendup T_DISCONNECT.IND
 	untimer $con_timer
 
