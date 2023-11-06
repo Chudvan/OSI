@@ -1,10 +1,11 @@
-﻿T_INIT.REQ
+﻿﻿T_INIT.REQ
 
 integer declare addr
 integer declare state
 integer declare con_timer
 integer declare con_try
 integer declare con_limit
+integer declare delay_timer
 integer declare delay_time
 integer declare last_received
 integer declare last_sent
@@ -13,6 +14,8 @@ integer declare packageNumber
 integer declare packageType
 integer declare packageCrc
 buffer declare packageBuffer 
+queue declare packageQueue
+integer declare packageAddr
 buffer declare data 
 
 1 setto state
@@ -60,6 +63,7 @@ ConInd:
 		address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 		address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 		address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+		timeevent DELAYTIMER delay_timer 10
 		goto Exit
 
 ConConf:
@@ -102,6 +106,7 @@ packageBuffer pack $packageCrc 1 $packageBuffer sizeof(packageBuffer)  (sizeof(p
 address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+timeevent DELAYTIMER delay_timer 10
 ;Сохраняем адрес и устанавливаем таймер
 $address setto addr
 timeevent CONTIMER con_timer (2 * $delay_time + 1) address $address
@@ -120,6 +125,7 @@ packageBuffer pack $packageCrc 1 $packageBuffer sizeof(packageBuffer)  (sizeof(p
 address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+timeevent DELAYTIMER delay_timer 10
 
 ---
 
@@ -133,13 +139,20 @@ T_DATA.REQ
 packageBuffer pack 4 1 $last_sent 1 $userdata sizeof(userdata) (sizeof(userdata) + 2)
 varcrc packageCrc $packageBuffer 
 packageBuffer pack $packageCrc 1 $packageBuffer sizeof(packageBuffer) (sizeof(userdata) + 3)
-;Шлём его
-address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
-address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
-address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
-address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
-;Сохраняем адрес
-$address setto addr
+
+if (qcount(packageQueue) == 0) && ($delay_timer == 0) send
+putInQueue:
+	packageBuffer pack $addr 1 $packageBuffer sizeof(packageBuffer)  (sizeof(packageBuffer) + 1)
+	queue $packageBuffer packageQueue
+	goto Exit
+send:
+	;Шлём его
+	address $addr userdata $packageBuffer eventdown N_DATAGRAM.REQ
+	address $addr userdata $packageBuffer eventdown N_DATAGRAM.REQ
+	address $addr userdata $packageBuffer eventdown N_DATAGRAM.REQ
+	address $addr userdata $packageBuffer eventdown N_DATAGRAM.REQ
+	timeevent DELAYTIMER delay_timer 10
+Exit:
 
 ---
 
@@ -151,10 +164,19 @@ T_DISCONNECT.REQ
 packageBuffer pack 3 1 1
 varcrc packageCrc $packageBuffer 
 packageBuffer pack $packageCrc 1 $packageBuffer sizeof(packageBuffer)  (sizeof(packageBuffer) + 1)
-;Посылаем
-address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
-address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
-address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+
+if (qcount(packageQueue) == 0) && ($delay_timer == 0) disconnect
+putInQueue:
+	packageBuffer pack $address 1 $packageBuffer sizeof(packageBuffer)  (sizeof(packageBuffer) + 1)
+	queue $packageBuffer packageQueue
+	goto Exit
+disconnect:
+	;Посылаем
+	address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+	address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+	address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+	timeevent DELAYTIMER delay_timer 10
+Exit:
 
 ---
 
@@ -175,6 +197,7 @@ state2:
 	address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 	address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 	address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+	timeevent DELAYTIMER delay_timer 10
 
 	;Устанавливаем таймер
 	timeevent CONTIMER con_timer (2 * $delay_time + 1) address $address
@@ -190,8 +213,27 @@ over:
 	address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 	address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
 	address $address userdata $packageBuffer eventdown N_DATAGRAM.REQ
+	timeevent DELAYTIMER delay_timer 10
 	; Оповещаем сеансовый уровень о дисконнекте
 	sendup T_DISCONNECT.IND
 	untimer $con_timer
 
+Exit:
+
+---
+
+DELAYTIMER
+
+0 setto delay_timer
+if qcount(packageQueue) == 0 Exit
+send:
+	out "DELAYTIMER: send"
+	dequeue(packageQueue) setto packageBuffer
+	packageBuffer unbufferit  packageAddr 1 packageBuffer (sizeof(packageBuffer) - 1) 
+	address $packageAddr userdata $packageBuffer eventdown N_DATAGRAM.REQ
+	address $packageAddr userdata $packageBuffer eventdown N_DATAGRAM.REQ
+	address $packageAddr userdata $packageBuffer eventdown N_DATAGRAM.REQ
+	address $packageAddr userdata $packageBuffer eventdown N_DATAGRAM.REQ
+	timeevent DELAYTIMER delay_timer 10
+	goto Exit
 Exit:
