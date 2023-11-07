@@ -1,0 +1,113 @@
+﻿S_INIT.REQ
+
+integer declare addr
+integer declare state
+integer declare last_received
+integer declare last_sent
+buffer declare quality_
+buffer declare demand_
+integer declare packageType
+buffer declare packageBuffer 
+
+1 setto state
+0 setto last_received
+0 setto last_sent
+
+;Типы пакетов
+
+;пакет для согласования параметров (param, packageType==$PARAM)
+integer declare PARAM
+1 setto PARAM
+;пакет с согласованными параметрами (param_2, packageType==$PARAM2)
+integer declare PARAM2
+2 setto PARAM2
+
+---
+
+S_CONNECT.REQ
+
+;параметры:  address (число), quality (буфер), demand (буфер)
+2 setto state
+$address setto addr
+$quality setto quality_
+$demand setto demand_
+
+; TODO маркеры из demand 
+
+address $address eventdown T_CONNECT.REQ
+
+---
+
+S_CONNECT.RESP
+
+;параметры:  address (число), quality (буфер)
+6 setto state
+$quality setto quality_
+;Формируем пакет с согласованными параметрами (param_2, packageType==$PARAM2)
+packageBuffer pack $PARAM2 1 $quality_ 2 3
+userdata $packageBuffer eventdown T_DATA.REQ
+userdata $packageBuffer eventdown T_DATA.REQ
+userdata $packageBuffer eventdown T_DATA.REQ
+
+; TODO маркеры из demand 
+
+---
+
+T_CONNECT.CONF
+
+;параметры:  address (число)
+3 setto state
+;Формируем пакет для согласования параметров (param, packageType==$PARAM)
+packageBuffer pack $PARAM 1 $quality_ 2 $demand_ 1 4
+userdata $packageBuffer eventdown T_DATA.REQ
+userdata $packageBuffer eventdown T_DATA.REQ
+userdata $packageBuffer eventdown T_DATA.REQ
+
+---
+
+T_CONNECT.IND
+
+;параметры:  address (число)
+4 setto state
+$address setto addr
+
+address $address eventdown T_CONNECT.RESP
+
+---
+
+T_DATA.IND
+
+;параметры:  userdata (буфер)
+
+;Распаковываем пакет
+userdata unbufferit  packageType 1
+
+($packageType==$PARAM) if ConInd
+($packageType==$PARAM2) && ($state == 3) if ConConf
+goto Exit
+
+ConInd:
+	($state == 4) if ConInd4
+	($state == 6) if ConInd6
+	goto Exit
+	ConInd4:
+		5 setto state
+		userdata unbufferit  packageType 1 quality_ 2 demand_ 1
+		; TODO маркеры из demand 
+		sendup address $addr quality $quality_ demand $demand_ S_CONNECT.IND 
+		goto Exit
+	ConInd6:
+		;Формируем пакет с согласованными параметрами (param_2, packageType==$PARAM2)
+		packageBuffer pack $PARAM2 1 $quality_ 2 3
+		userdata $packageBuffer eventdown T_DATA.REQ
+		userdata $packageBuffer eventdown T_DATA.REQ
+		userdata $packageBuffer eventdown T_DATA.REQ
+		goto Exit
+
+ConConf:
+	6 setto state
+	userdata unbufferit  packageType 1 quality_ 2
+	sendup quality $quality_ S_CONNECT.CONF
+	goto Exit
+
+Exit:
