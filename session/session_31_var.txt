@@ -1,15 +1,24 @@
 ﻿S_INIT.REQ
 
 integer declare addr
-integer declare state
+integer declare con_timer
+integer declare con_try
+integer declare con_limit
+integer declare delay_time
 integer declare last_received
 integer declare last_sent
 buffer declare quality_
 buffer declare demand_
 integer declare packageType
 buffer declare packageBuffer 
+buffer declare packageABORT
+integer declare vars_init_timer
+integer declare vars_init_time
+3 setto con_limit
+20 setto delay_time
+50 setto vars_init_time
 
-1 setto state
+0 setto con_try
 0 setto last_received
 0 setto last_sent
 
@@ -21,13 +30,45 @@ integer declare PARAM
 ;пакет с согласованными параметрами (param_2, packageType==$PARAM2)
 integer declare PARAM2
 2 setto PARAM2
+;пакет запроса БЕЗУСЛОВНОГО дисконнекта (abort, packageType==$ABORT)
+integer declare ABORT
+3 setto ABORT
+packageABORT pack $ABORT 1 1
+
+;Состояния системы (state):
+integer declare state
+;Начальное состояние
+integer declare INITIAL
+1 setto INITIAL
+$INITIAL setto state ;Начальное состояние - инициализация
+;Пришёл запрос на установление сеансового соединения, послан запрос на установление транспортного соединения
+integer declare WAIT_T_CONN
+2 setto WAIT_T_CONN
+;Пришло подтверждение установления транспортного соединения, начинаем переговоры
+integer declare T_CONN_DONE
+3 setto T_CONN_DONE
+;Пришла индикация установления транспортного соединения, отправляем ответ транспортного соединения
+integer declare T_CONN_RESP
+4 setto T_CONN_RESP
+;Пришли параметры, отправляем их наверх
+integer declare S_CONN_IND
+5 setto S_CONN_IND
+;Сеансовое соединение установлено
+integer declare S_CONN_DONE
+6 setto S_CONN_DONE
+;Пришёл запрос БЕЗУСЛОВНОГО дисконнекта 
+integer declare WAIT_U_ABORT
+7 setto WAIT_U_ABORT
 
 ---
 
 S_CONNECT.REQ
 
 ;параметры:  address (число), quality (буфер), demand (буфер)
-2 setto state
+
+out CurrentSystemName() "S_CONNECT.REQ"
+$WAIT_T_CONN setto state
+1 setto con_try
 $address setto addr
 $quality setto quality_
 $demand setto demand_
@@ -35,13 +76,14 @@ $demand setto demand_
 ; TODO маркеры из demand 
 
 address $address eventdown T_CONNECT.REQ
+timeevent TIMER_RECONNECT con_timer 4 * (2 * $delay_time + 1)
 
 ---
 
 S_CONNECT.RESP
 
 ;параметры:  address (число), quality (буфер)
-6 setto state
+$S_CONN_DONE setto state
 $quality setto quality_
 ;Формируем пакет с согласованными параметрами (param_2, packageType==$PARAM2)
 packageBuffer pack $PARAM2 1 $quality_ 2 3
@@ -53,25 +95,41 @@ userdata $packageBuffer eventdown T_DATA.REQ
 
 ---
 
+S_U_ABORT.REQ
+
+;параметры:  нет
+out "S_U_ABORT.REQ"
+$WAIT_U_ABORT setto state
+;Шлём пакет запроса БЕЗУСЛОВНОГО дисконнекта (abort, packageType==$ABORT)
+userdata $packageABORT eventdown T_DATA.REQ
+userdata $packageABORT eventdown T_DATA.REQ
+userdata $packageABORT eventdown T_DATA.REQ
+
+---
+
 T_CONNECT.CONF
 
 ;параметры:  address (число)
-3 setto state
+$T_CONN_DONE setto state
 ;Формируем пакет для согласования параметров (param, packageType==$PARAM)
 packageBuffer pack $PARAM 1 $quality_ 2 $demand_ 1 4
 userdata $packageBuffer eventdown T_DATA.REQ
 userdata $packageBuffer eventdown T_DATA.REQ
 userdata $packageBuffer eventdown T_DATA.REQ
+untimer  $con_timer 
 
 ---
 
 T_CONNECT.IND
 
 ;параметры:  address (число)
-4 setto state
+out "T_CONNECT.IND"
+
+$T_CONN_RESP setto state
 $address setto addr
 
 address $address eventdown T_CONNECT.RESP
+
 
 ---
 
@@ -82,21 +140,22 @@ T_DATA.IND
 ;Распаковываем пакет
 userdata unbufferit  packageType 1
 
-($packageType==$PARAM) if ConInd
-($packageType==$PARAM2) && ($state == 3) if ConConf
+($packageType==$PARAM) if SConInd
+($packageType==$PARAM2) && ($state == $T_CONN_DONE) if SConConf
+($packageType==$ABORT) if UAbort
 goto Exit
 
-ConInd:
-	($state == 4) if ConInd4
-	($state == 6) if ConInd6
+SConInd:
+	($state == $T_CONN_RESP) if SConInd4
+	($state == $S_CONN_DONE) if SConInd6
 	goto Exit
-	ConInd4:
-		5 setto state
+	SConInd4:
+		$S_CONN_IND setto state
 		userdata unbufferit  packageType 1 quality_ 2 demand_ 1
 		; TODO маркеры из demand 
 		sendup address $addr quality $quality_ demand $demand_ S_CONNECT.IND 
 		goto Exit
-	ConInd6:
+	SConInd6:
 		;Формируем пакет с согласованными параметрами (param_2, packageType==$PARAM2)
 		packageBuffer pack $PARAM2 1 $quality_ 2 3
 		userdata $packageBuffer eventdown T_DATA.REQ
@@ -104,10 +163,83 @@ ConInd:
 		userdata $packageBuffer eventdown T_DATA.REQ
 		goto Exit
 
-ConConf:
-	6 setto state
+SConConf:
+	$S_CONN_DONE setto state
 	userdata unbufferit  packageType 1 quality_ 2
 	sendup quality $quality_ S_CONNECT.CONF
 	goto Exit
 
+UAbort:
+	($state == $WAIT_U_ABORT) if WaitUAbort
+	;else
+		out "UABort"
+		$WAIT_U_ABORT setto state
+		sendup S_U_ABORT.IND
+		address $addr eventdown T_DISCONNECT.REQ
+		timeevent TIMER_VARS_INIT vars_init_timer $vars_init_time
+		goto Exit
+	WaitUAbort:
+		address $addr eventdown T_DISCONNECT.REQ
+		untimer $vars_init_timer
+		timeevent TIMER_VARS_INIT vars_init_timer $vars_init_time
+		goto Exit
+
 Exit:
+
+---
+
+T_DISCONNECT.IND
+
+;параметры:  нет
+($state == $WAIT_U_ABORT) if WaitUAbort
+goto Exit
+
+WaitUAbort:
+	out "t_disc.ind " + "WaitUAbort"
+	timeevent TIMER_VARS_INIT vars_init_timer 0
+
+Exit:
+
+---
+
+TIMER_DISCONNECT_DELAY
+
+out "TIMER_DISCONNECT_DELAY"
+
+address $addr eventdown T_CONNECT.REQ
+timeevent TIMER_RECONNECT con_timer 4 * (2 * $delay_time + 1)
+
+---
+
+TIMER_RECONNECT
+
+; увеличиваем количество попыток соединения
+
+out "TIMER_RECONNECT"
+
+$con_try + 1 setto con_try
+; попытки соединения кончились?
+$con_try > $con_limit if over
+;WAIT_T_CONN
+	address $addr eventdown T_DISCONNECT.REQ
+	timeevent TIMER_DISCONNECT_DELAY con_timer ($delay_time + 1)
+	goto Exit
+
+over:
+	timeevent TIMER_VARS_INIT vars_init_timer 1
+	; Оповещаем уровень предсавления о дисконнекте
+	sendup S_P_ABORT.IND
+	untimer $con_timer
+
+Exit:
+
+---
+
+TIMER_VARS_INIT
+
+out CurrentSystemName() "TIMER_VARS_INIT"
+
+0 setto con_try
+0 setto last_received
+0 setto last_sent
+$INITIAL setto state
