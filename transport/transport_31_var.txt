@@ -8,8 +8,11 @@ integer declare con_limit
 integer declare discon_timer
 integer declare discon_try
 integer declare discon_limit
+integer declare state_1_timer
 integer declare delay_timer
 integer declare delay_time
+integer declare send_package_timer
+integer declare right_now
 integer declare last_received
 integer declare last_sent
 integer declare calcCrc
@@ -31,25 +34,26 @@ buffer declare data
 3 setto con_limit
 3 setto discon_limit
 20 setto delay_time
+1 setto right_now
 0 setto last_received
 0 setto last_sent
 0 setto packageNumber
 
 ;Типы пакетов
 
-;packageConInd пакет для соединения (packageType==1)
+;packageConInd пакет для соединения (N_CONNECT.REQ) (packageType==1)
 packageBuffer pack 1 1 1
 varcrc packageCrc $packageBuffer 
 packageConInd pack $packageCrc 1 $packageBuffer sizeof(packageBuffer)  (sizeof(packageBuffer) + 1)
-;packageConConf пакет для соединения (packageType==2)
+;packageConConf пакет для соединения (N_CONNECT.RESP) (packageType==2)
 packageBuffer pack 2 1 1
 varcrc packageCrc $packageBuffer 
 packageConConf pack $packageCrc 1 $packageBuffer sizeof(packageBuffer)  (sizeof(packageBuffer) + 1)
-;packageDConReq пакет для DISCONNECT.REQ (packageType==3)
+;packageDConReq пакет N_DATA.REQ(дисконнект) (packageType==3)
 packageBuffer pack 3 1 1
 varcrc packageCrc $packageBuffer 
 packageDConReq pack $packageCrc 1 $packageBuffer sizeof(packageBuffer)  (sizeof(packageBuffer) + 1)
-;packageDConResp пакет для дисконнекта (packageType==5)
+;packageDConResp пакет для дисконнекта (N_DISCONNECT.REQ) (packageType==5)
 packageBuffer pack 5 1 1
 varcrc packageCrc $packageBuffer 
 packageDConResp pack $packageCrc 1 $packageBuffer sizeof(packageBuffer)  (sizeof(packageBuffer) + 1)
@@ -65,11 +69,12 @@ varcrc calcCrc $packageBuffer
 ($calcCrc != $packageCrc) if Сorrupted
 ;Вычленяем packageType
 packageBuffer unbufferit  packageType 1 
-($state == 7) if DConResp
+out "T " CurrentSystemName() ": N_DATAGRAM.IND " $packageType " " $state
 ($packageType == 1) if ConInd
 ($packageType == 2) && ($state == 2) if ConConf
 ($packageType == 3) if DConReq
-($packageType == 4) if DataInd
+($packageType == 4) && ($state < 8) if DataInd
+($packageType == 5) && ($state != 1) if DConResp
 goto Exit
 
 Сorrupted:
@@ -85,10 +90,8 @@ ConInd:
 		$address setto addr
 		goto Exit
 	ConInd6:
-		;Шлём пакет для соединения (packageType==2)
-		address $address userdata $packageConConf eventdown N_DATAGRAM.REQ
-		address $address userdata $packageConConf eventdown N_DATAGRAM.REQ
-		address $address userdata $packageConConf eventdown N_DATAGRAM.REQ
+		;Шлём пакет для соединения (N_CONNECT.RESP) (packageType==2)
+		timeevent SENDPACKAGETIMER send_package_timer $right_now address $address userdata $packageConConf
 		timeevent DELAYTIMER delay_timer 10
 		goto Exit
 
@@ -99,31 +102,26 @@ ConConf:
 	goto Exit
 
 DConReq:
-	($state == 1) if DConReq1
+	($state == 10) if DConReq10
+	($state == 1) if Exit
 	;else
-		1 setto state
+		10 setto state
+		sendup T_DISCONNECT.IND ; дальше - DConReq10
+	DConReq10:
 		;Шлём пакет для дисконнекта (packageType==5)
-		address $address userdata $packageDConResp eventdown N_DATAGRAM.REQ
-		address $address userdata $packageDConResp eventdown N_DATAGRAM.REQ
-		address $address userdata $packageDConResp eventdown N_DATAGRAM.REQ
-		sendup T_DISCONNECT.IND
-		goto Exit
-	DConReq1: ; не нужно делать T_DISCONNECT.IND
-		;Шлём пакет для дисконнекта (packageType==5)
-		address $address userdata $packageDConResp eventdown N_DATAGRAM.REQ
-		address $address userdata $packageDConResp eventdown N_DATAGRAM.REQ
-		address $address userdata $packageDConResp eventdown N_DATAGRAM.REQ
+		timeevent SENDPACKAGETIMER send_package_timer $right_now address $address userdata $packageDConResp
+		untimer $state_1_timer		
+		timeevent TIMER_STATE_1 state_1_timer 10		
 		goto Exit
 
 DConResp:
-	out "TODO: queue for state==???"
-	($packageType != 5) if Exit
-	1 setto state
+	9 setto state
+	timeevent TIMER_STATE_1 state_1_timer $right_now
 	untimer $discon_timer
 	goto Exit
 
 DataInd:
-	8 setto state
+	7 setto state
 	;Вычленяем тип, № пакета и данные
 	packageBuffer unbufferit  packageType 1 packageNumber 1 data (sizeof(packageBuffer) - 2)
 	;Проверяем номер принятого пакета
@@ -143,10 +141,8 @@ T_CONNECT.REQ
 ;параметры:  address (число)
 2 setto state
 1 setto con_try
-;Шлем пакет для соединения (packageType==1)
-address $address userdata $packageConInd eventdown N_DATAGRAM.REQ
-address $address userdata $packageConInd eventdown N_DATAGRAM.REQ
-address $address userdata $packageConInd eventdown N_DATAGRAM.REQ
+;Шлем пакет для соединения (N_CONNECT.REQ) (packageType==1)
+timeevent SENDPACKAGETIMER send_package_timer $right_now address $address userdata $packageConInd
 timeevent DELAYTIMER delay_timer 10
 ;Сохраняем адрес и устанавливаем таймер
 $address setto addr
@@ -158,10 +154,8 @@ T_CONNECT.RESP
 
 ;параметры:  address (число)
 6 setto state
-;Шлём пакет для соединения (packageType==2)
-address $address userdata $packageConConf eventdown N_DATAGRAM.REQ
-address $address userdata $packageConConf eventdown N_DATAGRAM.REQ
-address $address userdata $packageConConf eventdown N_DATAGRAM.REQ
+;Шлём пакет для соединения (N_CONNECT.RESP) (packageType==2)
+timeevent SENDPACKAGETIMER send_package_timer $right_now address $address userdata $packageConConf
 timeevent DELAYTIMER delay_timer 10
 
 ---
@@ -184,10 +178,7 @@ putInQueue:
 	goto Exit
 send:
 	;Шлём его
-	address $addr userdata $packageBuffer eventdown N_DATAGRAM.REQ
-	address $addr userdata $packageBuffer eventdown N_DATAGRAM.REQ
-	address $addr userdata $packageBuffer eventdown N_DATAGRAM.REQ
-	address $addr userdata $packageBuffer eventdown N_DATAGRAM.REQ
+	timeevent SENDPACKAGETIMER send_package_timer $right_now address $addr userdata $packageBuffer
 	timeevent DELAYTIMER delay_timer 10
 Exit:
 
@@ -196,19 +187,17 @@ Exit:
 T_DISCONNECT.REQ
 
 ;параметры:  address (число)
-7 setto state
-
+8 setto state
+untimer $discon_timer
 if (qcount(packageQueue) == 0) && ($delay_timer == 0) disconnect
 putInQueue:
-	;ОТЛОЖЕННЫЙ пакет для DISCONNECT.REQ (packageType==3) В ОЧЕРЕДЬ
+	;ОТЛОЖЕННЫЙ пакет N_DATA.REQ(дисконнект) (packageType==3) В ОЧЕРЕДЬ
 	packageBuffer pack $address 1 $packageDConReq sizeof(packageBuffer)  (sizeof(packageBuffer) + 1)
 	queue $packageBuffer packageQueue
 	goto Exit
 disconnect:
-	;Шлём пакет для DISCONNECT.REQ (packageType==3)
-	address $address userdata $packageDConReq eventdown N_DATAGRAM.REQ
-	address $address userdata $packageDConReq eventdown N_DATAGRAM.REQ
-	address $address userdata $packageDConReq eventdown N_DATAGRAM.REQ
+	;Шлём пакет N_DATA.REQ(дисконнект) (packageType==3)
+	timeevent SENDPACKAGETIMER send_package_timer $right_now address $address userdata $packageDConReq
 	timeevent REDISCONNECT discon_timer (2 * $delay_time + 1) address $address
 
 Exit:
@@ -218,14 +207,15 @@ Exit:
 CONTIMER
 
 ; увеличиваем количество попыток соединения
+
+out "T " CurrentSystemName() "CONTIMER"
+
 $con_try + 1 setto con_try
 ; попытки соединения кончились?
 $con_try > $con_limit if over
 ;state2:
-	;Шлем пакет для соединения (packageType==1)
-	address $address userdata $packageConInd eventdown N_DATAGRAM.REQ
-	address $address userdata $packageConInd eventdown N_DATAGRAM.REQ
-	address $address userdata $packageConInd eventdown N_DATAGRAM.REQ
+	;Шлем пакет для соединения (N_CONNECT.REQ) (packageType==1)
+	timeevent SENDPACKAGETIMER send_package_timer $right_now address $address userdata $packageConInd
 	timeevent DELAYTIMER delay_timer 10
 
 	;Устанавливаем таймер
@@ -233,15 +223,13 @@ $con_try > $con_limit if over
 	goto Exit
 
 over:
-	1 setto state
-	;Шлем пакет для соединения (packageType==3)
-	address $address userdata $packageDConReq eventdown N_DATAGRAM.REQ
-	address $address userdata $packageDConReq eventdown N_DATAGRAM.REQ
-	address $address userdata $packageDConReq eventdown N_DATAGRAM.REQ
+	11 setto state
+	timeevent TIMER_STATE_1 state_1_timer ($right_now+1)
+	;Шлем пакет N_DATA.REQ(дисконнект) (packageType==3)
+	timeevent SENDPACKAGETIMER send_package_timer $right_now address $address userdata $packageDConReq
 	timeevent DELAYTIMER delay_timer 10
 	; Оповещаем сеансовый уровень о дисконнекте
 	sendup T_DISCONNECT.IND
-	untimer $con_timer
 
 Exit:
 
@@ -252,22 +240,17 @@ DELAYTIMER
 0 setto delay_timer
 if qcount(packageQueue) == 0 Exit
 send:
-	out "DELAYTIMER: send"
 	dequeue(packageQueue) setto packageBuffer
 	packageBuffer unbufferit  packageAddr 1 packageBuffer (sizeof(packageBuffer) - 1) 
 	packageBuffer unbufferit  packageCrc 1 packageType 1 
+	out "T " CurrentSystemName() ": DELAYTIMER: send: " $packageType
 	if ($packageType == 3) if disconnect
 	;else
-		address $packageAddr userdata $packageBuffer eventdown N_DATAGRAM.REQ
-		address $packageAddr userdata $packageBuffer eventdown N_DATAGRAM.REQ
-		address $packageAddr userdata $packageBuffer eventdown N_DATAGRAM.REQ
-		address $packageAddr userdata $packageBuffer eventdown N_DATAGRAM.REQ
+		timeevent SENDPACKAGETIMER send_package_timer $right_now address $packageAddr userdata $packageBuffer
 		timeevent DELAYTIMER delay_timer 10
 		goto Exit
 	disconnect:
-		address $packageAddr userdata $packageBuffer eventdown N_DATAGRAM.REQ
-		address $packageAddr userdata $packageBuffer eventdown N_DATAGRAM.REQ
-		address $packageAddr userdata $packageBuffer eventdown N_DATAGRAM.REQ
+		timeevent SENDPACKAGETIMER send_package_timer $right_now address $packageAddr userdata $packageBuffer
 		timeevent REDISCONNECT discon_timer (2 * $delay_time + 1) address $packageAddr 
 		clearqueue packageQueue
 Exit:
@@ -276,22 +259,43 @@ Exit:
 
 REDISCONNECT
 
-out "REDIS"
+out "T " CurrentSystemName() ": REDIS"
 ; увеличиваем количество попыток дисконнекта
 $discon_try + 1 setto discon_try
 ; попытки разъединения  кончились?
 $discon_try > $discon_limit if over
-;state7:
-	;Шлём пакет для DISCONNECT.REQ (packageType==3)
-	address $address userdata $packageDConReq eventdown N_DATAGRAM.REQ
-	address $address userdata $packageDConReq eventdown N_DATAGRAM.REQ
-	address $address userdata $packageDConReq eventdown N_DATAGRAM.REQ
+;state8:
+	;Шлём пакет N_DATA.REQ(дисконнект) (packageType==3)
+	timeevent SENDPACKAGETIMER send_package_timer $right_now address $address userdata $packageDConReq
 	timeevent REDISCONNECT discon_timer (2 * $delay_time + 1) address $address
 	goto Exit
 over:
-	;Шлём пакет для дисконнекта (packageType==5)
-	address $address userdata $packageDConResp eventdown N_DATAGRAM.REQ
-	address $address userdata $packageDConResp eventdown N_DATAGRAM.REQ
-	address $address userdata $packageDConResp eventdown N_DATAGRAM.REQ
+	;Шлём пакет для дисконнекта (N_DISCONNECT.REQ) (packageType==5)
+	timeevent SENDPACKAGETIMER send_package_timer $right_now address $address userdata $packageDConResp
 	untimer $discon_timer
+	timeevent TIMER_STATE_1 state_1_timer ($right_now+1)
+
 Exit:
+
+---
+
+SENDPACKAGETIMER
+
+;параметры:  address (число), userdata (буфер)
+
+address $address userdata $userdata eventdown N_DATAGRAM.REQ
+address $address userdata $userdata eventdown N_DATAGRAM.REQ
+address $address userdata $userdata eventdown N_DATAGRAM.REQ
+
+---
+
+TIMER_STATE_1
+
+out "T " CurrentSystemName() "TIMER_STATE_1"
+
+0 setto con_try
+0 setto discon_try
+1 setto state
+0 setto last_received
+0 setto last_sent
+0 setto packageNumber
