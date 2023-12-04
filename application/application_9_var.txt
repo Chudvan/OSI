@@ -1,0 +1,746 @@
+A_INIT.REQ
+
+integer declare addr_mine
+-1 setto addr_mine
+; другая система
+integer declare addr_other
+-1 setto addr_other
+; глобальный справочник
+string declare gg_name
+"Guide" setto gg_name
+integer declare addr_guide
+-1 setto addr_guide
+; инициатор соединения
+integer declare conn_starter
+0 setto conn_starter
+;------------------------------
+;состояния
+;------------------------------
+; нет соединения
+integer declare INITIAL_ST
+0 setto INITIAL_ST
+; A-соединение установлено
+integer declare CONNED
+1 setto CONNED
+integer declare state
+$INITIAL_ST setto state
+;------------------------------
+; соединение
+;------------------------------
+; чужой
+string declare namer_
+string declare namer__
+; свой
+string declare namei_
+string declare namei__
+; контекст уровня представления 
+buffer declare p_context
+; качество сеансового уровня
+buffer declare s_quality
+; маркеры
+buffer declare s_demand
+s_demand pack 1 1 1
+
+; договорились со справочником
+; контекст уровня представления 
+buffer declare gs_p_context
+; качество сеансового уровня
+buffer declare gs_s_quality
+; маркеры
+buffer declare gs_s_demand
+$s_demand setto gs_s_demand
+
+; договорились с др системой
+; контекст уровня представления 
+buffer declare dt_p_context
+; качество сеансового уровня
+buffer declare dt_s_quality
+; маркеры
+buffer declare dt_s_demand
+$s_demand setto dt_s_demand
+;------------------------------
+; таймеры
+;------------------------------
+integer declare resolve_timer
+integer declare locguide_timer
+integer declare associate_timer
+integer declare globalguide_timer
+integer declare release_timer
+integer declare w_to_discon_timer
+integer declare transfer_init_timer
+; ассоциация
+buffer declare namer_buf
+buffer declare namei_buf
+;------------------------------
+; обращение к локальному справочнику
+;------------------------------
+; ответ локального справочника
+buffer declare lg_ans
+; идентификатор ответа
+integer declare lg_id
+; имя, которое ищем в локальном справочнике
+string declare tmp_namer
+;  временная переменная под адрес
+integer declare tmp_addr
+; время ожидания
+integer declare wait_start
+integer declare wait_end
+; возможная ошибка в имени
+string declare bad_sym
+string declare good_sym
+;  флаги по результатам ответа
+integer declare addr_got
+integer declare KNOW_ADDR
+1 setto KNOW_ADDR
+integer declare WAIT
+2 setto WAIT
+; начальное состояние
+integer declare DONT_FIND
+-1 setto DONT_FIND
+$DONT_FIND setto addr_got
+; ожидание адреса
+integer declare TRANS_DELAY
+298 setto TRANS_DELAY
+; флаг для поиска адреса в глоб справочнике
+integer declare need_to_ask_global
+0  need_to_ask_global setto 
+;------------------------------
+; установление P_CONN на A_ASSOC
+;------------------------------
+; адрес с кем соединяться
+integer declare addr_to
+string declare apcon_
+;------------------------------
+; передача данных P_DATA
+;------------------------------
+buffer declare msg_buf
+integer declare sync_timer
+integer declare token_
+integer declare data_type_id
+buffer declare tmp_userdata
+;int_data declare integer
+;------------------------------
+; повторный запрос у глобального справочника
+;------------------------------
+integer declare wait_global
+
+;msg_qu declare queue
+
+---
+
+_A_U_ABORT.REQ
+
+;параметры: apcon (строка)
+ eventdown P_U_ABORT.REQ
+
+---
+
+_P_RESYNCHRONIZE.CONF
+
+;параметры:  token (число)
+
+---
+
+_P_RESYNCHRONIZE.IND
+
+;параметры:  token (число)
+
+---
+
+A_ASSOCIATE.CONF
+
+;параметры: context (буфер), quality (буфер), demand (буфер)
+; параметры обновили, когда пришел P_CONNECT.CONF
+out "A " CurrentSystemName() ": A_ASSOCIATE.CONF"
+$apcon_ == "GS" if gs_
+$apcon_ == "DT" if dt_
+out "bad apcon: "+$apcon_
+return
+gs_:
+; пытаемся отправить сообщение справочнику, чтобы узнать адрес системы
+out CurrentSystemName()+" GS: A_ASSOCIATE.CONF -> P_DATA.REQ"
+; формат передачи: идентификатор | данные => id str (3) | namer_
+msg_buf pack 3 1 $namer_ sizeof(namer_) sizeof(namer_)+1
+userdata $msg_buf eventdown P_DATA.REQ
+; и сразу бахнем синхронизацию -- только на единицу позже, чтобы не нарушить порядок сообщений
+timeevent A_SYNC.REQ sync_timer 1 
+return
+
+dt_:
+out CurrentSystemName()+" DT: A_ASSOCIATE.CONF -> A_TRANSFER_INIT.CONF"
+sendup context $dt_p_context quality $dt_s_quality A_TRANSFER_INIT.CONF
+$CONNED setto state
+
+---
+
+A_ASSOCIATE.IND
+
+;параметры: namei (буфер), quality (буфер), apcon (строка)
+; приходит буфер, нужна строка. Знаем откуда брать, поэтому без преобразований
+out "A " CurrentSystemName() ": A_ASSOCIATE.IND"
+sendup namei $namer_ quality $dt_s_quality A_TRANSFER_INIT.IND
+
+---
+
+A_ASSOCIATE.REQ
+
+;параметры: namer (буфер), namei (буфер), quality (буфер), demand (буфер), context (буфер), apcon (строка)
+namei unbufferit addr_to 1 namei__ sizeof(namei)-1
+namer unbufferit addr_to 1 namer__ sizeof(namer)-1
+out "A " CurrentSystemName() ": A_ASSOCIATE.REQ: namer: "$namer__ " namei: "$namei__
+$apcon == "GS" if gs_
+$apcon == "DT" if dt_
+out "bad apcon: "+$apcon
+return
+gs_:
+out "GS A_ASSOCIATE.REQ -> P_CONNECT.REQ"
+namer unbufferit addr_to 1
+; попробуем не переписывать все эти параметры, мы же знаем, откуда их брать
+address $addr_to quality $gs_s_quality demand $gs_s_demand context $gs_p_context eventdown P_CONNECT.REQ
+return
+dt_:
+out "DT A_ASSOCIATE.REQ -> P_CONNECT.REQ"
+namer unbufferit addr_to 1
+out $addr_to
+; попробуем не переписывать все эти параметры, мы же знаем, откуда их брать
+address $addr_to quality $dt_s_quality demand $dt_s_demand context $dt_p_context eventdown P_CONNECT.REQ
+
+---
+
+A_ASSOCIATE.RESP
+
+;параметры: namei (буфер), context (буфер), quality (буфер), apcon (строка)
+out "A " CurrentSystemName() ": A_ASSOCIATE.RESP"
+$CONNED setto state
+address $addr_other quality $dt_s_quality context $dt_p_context eventdown P_CONNECT.RESP
+
+---
+
+A_DATA.REQ
+
+;параметры: userdata(буфер)
+out "A " CurrentSystemName() ": A_DATA.REQ"
+$userdata setto msg_buf
+userdata $msg_buf eventdown P_DATA.REQ
+; и сразу бахнем синхронизацию -- только на единицу позже, чтобы не нарушить порядок сообщений
+timeevent A_SYNC.REQ sync_timer 1 
+
+---
+
+A_RELEASE.CONF
+
+;параметры: apcon (строка)
+out "A " CurrentSystemName()+" A_RELEASE.CONF" 
+$apcon_ == "GS" if gs_
+$apcon_ == "DT" if dt_
+out "bad apcon: "+$apcon_
+return
+gs_:
+$addr_got != $KNOW_ADDR if gs_term_
+; Идентификатор Адрес Символ1 Символ2
+out "A " CurrentSystemName() ": A_DATA.REQ"
+lg_ans pack 0 1 $addr_other 1 "" 0 "" 0 4
+timeevent A_RESOLVE.IND resolve_timer 0 address $lg_ans
+$DONT_FIND setto addr_got
+; зачистить требования по соединению
+$s_quality setto gs_s_quality
+$s_demand setto gs_s_demand
+$p_context setto gs_p_context
+return
+gs_term_:
+out "try to resolve.ind but addr is unknown"
+out $addr_got
+return
+
+dt_:
+0 setto conn_starter
+"" setto apcon_
+$INITIAL_ST setto state
+out CurrentSystemName()+" A_RELEASE.CONF -> A_TERMINATE.CONF"
+sendup A_TERMINATE.CONF 
+
+return
+
+---
+
+A_RELEASE.IND
+
+;параметры: apcon (строка)
+out "A " CurrentSystemName()+" A_RELEASE.IND" 
+sendup A_TERMINATE.IND 
+
+---
+
+A_RELEASE.REQ
+
+;параметры: apcon (строка)
+out "A " CurrentSystemName()+" A_RELEASE.REQ" 
+P_RELEASE.REQ eventdown 
+
+---
+
+A_RELEASE.RESP
+
+;параметры: apcon (строка)
+out "A " CurrentSystemName()+" A_RELEASE.RESP" 
+"" setto apcon_
+P_RELEASE.RESP eventdown 
+
+---
+
+A_RESOLVE.IND
+
+;параметры: address (буфер)
+out "A " CurrentSystemName()+" A_RESOLVE.IND" 
+;gs_ if $apcon_ == "GS"
+;out "bad apcon: "+$apcon_
+;return
+;gs_:
+out "Lets try to connect to other system (DT) -- "+$namer_
+address unbufferit lg_id 1
+(($lg_id != 0) || ($addr_other < 0)) if gs_term_
+out $addr_other
+"DT" setto apcon_
+namer_buf pack $addr_other 1 $namer_ sizeof(namer_) 1+sizeof(namer_)
+namei_buf pack $addr_mine 1 $namei_ sizeof(namei_) 1+sizeof(namei_)
+;A_ASSOCIATE.REQ associate_timer 0 settimer namer $namer_buf namei $namei_buf demand $dt_s_demand context $dt_p_context apcon $apcon_
+timeevent CONN_TO_OTHER w_to_discon_timer 250 
+goto exit_
+
+gs_term_:
+out "Try to connect to other system but address is unknown. Exit..."
+exit_:
+return
+
+---
+
+A_RESOLVE.REQ
+
+;параметры: name (строка)
+; проверим, нет ли в сохраненных
+out "A " CurrentSystemName()+" A_RESOLVE.REQ" 
+$addr_other > 0 if resolve_ind_
+; поиск адреса в локальном справочнике
+$namer_ tmp_namer setto 
+out "A_RESOLVE.REQ try locguide "+$namer_
+subprog process_ans
+$lg_id == 0 if resolve_ind_
+$need_to_ask_global if cguide_conn_
+$WAIT == $addr_got if wait_for_timer_
+out "bad try to find other system address"
+return
+wait_for_timer_:
+out "wait for address of other system"
+return
+resolve_ind_:
+; Идентификатор Адрес Символ1 Символ2
+lg_ans pack 0 1 $addr_other 1 "" 0 "" 0 4
+timeevent A_RESOLVE.IND resolve_timer 0 address $lg_ans
+$DONT_FIND setto addr_got
+return
+
+; требуется узнать адрес в глобальном справочнике
+cguide_conn_:
+0 setto need_to_ask_global
+out "ask global guide"
+$addr_guide > 0 if ask_global_
+
+; поиск адреса в локальном справочнике
+$gg_name tmp_namer setto 
+out "A_RESOLVE.REQ try locguide "+$tmp_namer 
+subprog process_ans
+$lg_id == 0 if ask_global_
+$WAIT == $addr_got if wait_for_timer_
+out "bad try to find global guide address. RESOLVE.IND..."
+out $lg_id
+$DONT_FIND setto addr_got
+; Идентификатор Адрес Символ1 Символ2
+lg_ans pack 1 1 -1 1 "" 0 "" 0 4
+timeevent A_RESOLVE.IND resolve_timer 0 address $lg_ans
+return
+wait_for_timer_:
+out "wait for address of other system"
+return
+
+; адрес глобального справочника известен, пытаемся с ним соединиться
+ask_global_:
+out "Global guide addr"
+out $addr_guide
+; ASSOCIATE namer (буфер), namei (буфер), quality (буфер), demand (буфер), context (буфер), apcon (строка)
+out "associate with GLOBAL"
+namer_buf pack $addr_guide 1 $gg_name sizeof(gg_name) 1+sizeof(gg_name)
+namei_buf pack $addr_mine 1 $namei_ sizeof(namei_) 1+sizeof(namei_)
+"GS" setto apcon_
+timeevent A_ASSOCIATE.REQ associate_timer 0 namer $namer_buf namei $namei_buf demand $s_demand context $p_context apcon $apcon_
+$DONT_FIND setto addr_got
+return
+;------------------------------
+; разбор ответа локального справочника
+;------------------------------
+substart process_ans
+locguide($tmp_namer) setto lg_ans
+lg_ans unbufferit lg_id 1 tmp_addr 1 
+$lg_id == 0 if set_addr_
+(($lg_id == 1) || ($lg_id == 2)) if wait_
+$lg_id == 3 if ask_global_subprog_
+$lg_id == 4 if bad_req_
+out "bad locguide answer id"
+out $lg_id
+goto subprog_exit_
+; адрес есть в локальном справочнике
+set_addr_:
+out "found address for "+$tmp_namer
+out $tmp_addr
+$KNOW_ADDR setto addr_got
+$tmp_namer == $namer_ if set_addr_other_
+$tmp_namer == $gg_name if set_addr_gguide_
+goto subprog_exit_
+set_addr_other_:
+$tmp_addr setto addr_other
+goto subprog_exit_
+set_addr_gguide_:
+$tmp_addr setto addr_guide
+goto subprog_exit_
+; надо подождать
+wait_:
+$WAIT setto addr_got
+$lg_id == 1 if w_st_
+$lg_id == 2 if w_btw_
+goto subprog_exit_
+w_st_:
+lg_ans unbufferit lg_id 1 tmp_addr 1 wait_start 1
+$wait_start setto wait_end
+goto wait_timer_
+w_btw_:
+lg_ans unbufferit lg_id 1 tmp_addr 1 wait_start 1 wait_end 1
+goto wait_timer_
+wait_timer_:
+out "Lets wait for address"
+out $wait_start
+out $wait_end
+timeevent TRY_GET_ADDRESS locguide_timer $wait_start+1 
+goto subprog_exit_
+; надо спросить глобального
+ask_global_subprog_:
+1 setto need_to_ask_global
+goto subprog_exit_
+bad_req_:
+out "Localguide answer is 4, exit..."
+subprog_exit_:
+subend
+
+---
+
+A_SYNC.REQ
+
+out "A " CurrentSystemName() ": A_SYNC.REQ"
+P_SYNC_MAJOR.REQ eventdown 
+
+---
+
+A_TERMINATE.CONF
+
+out "A " CurrentSystemName() ": A_TERMINATE.CONF"
+
+---
+
+A_TERMINATE.REQ
+
+;параметры: нет
+out "A " CurrentSystemName() ": A_TERMINATE.REQ"
+$state == $INITIAL_ST if exit_
+timeevent A_RELEASE.REQ release_timer 0 apcon $apcon_
+return
+exit_:
+out CurrentSystemName()+" A_TERMINATE.REQ but state == $INITIAL_ST"
+return
+
+---
+
+A_TERMINATE.RESP
+
+out "A " CurrentSystemName() ": A_TERMINATE.RESP"
+timeevent A_RELEASE.RESP release_timer 0 apcon $apcon_
+0 setto conn_starter
+$INITIAL_ST setto state
+
+---
+
+A_TRANSFER_INIT.REQ
+
+;параметры: namer (строка), namei (строка), context (буфер), quality (буфер)
+out "A " CurrentSystemName() ": A_TRANSFER_INIT.REQ: namer: "$namer " namei: "$namei
+1 setto conn_starter
+$namer setto namer_
+$namei setto namei_
+$context setto p_context
+$quality setto s_quality
+
+$p_context setto gs_p_context
+$s_quality setto gs_s_quality
+$p_context setto dt_p_context
+$s_quality setto dt_s_quality
+
+
+out "transfer.req "+$namei_+" -> "+$namer_
+
+$addr_mine > 0 if find_other_
+out CurrentSystemName()+" ask local guide for its addr"
+locguide($namei_) setto lg_ans
+lg_ans unbufferit lg_id 1 tmp_addr 1 
+out $lg_id
+out $tmp_addr
+$tmp_addr setto addr_mine
+
+find_other_:
+out CurrentSystemName()+" A_TRANSFER.REQ ->A_RESOLVE.REQ"
+timeevent A_RESOLVE.REQ resolve_timer 0 name $namer_
+return
+
+---
+
+A_TRANSFER_INIT.RESP
+
+;параметры: namei (строка), context (буфер), quality (буфер)
+out "A " CurrentSystemName() ": A_TRANSFER_INIT.RESP"
+$quality setto dt_s_quality
+$context setto dt_p_context
+;namei (буфер), context (буфер), quality (буфер), apcon (строка)
+namer_buf pack $addr_other 1 $namer_ sizeof(namer_) sizeof(namer_)+1
+timeevent A_ASSOCIATE.RESP associate_timer 0 namei $namer_buf context $dt_p_context quality $dt_s_quality apcon $apcon_
+
+---
+
+CONN_TO_OTHER
+
+out "A " CurrentSystemName() ": CONN_TO_OTHER " $namer_ " " $addr_other
+timeevent A_ASSOCIATE.REQ associate_timer 500 namer $namer_buf namei $namei_buf demand $dt_s_demand context $dt_p_context apcon $apcon_
+
+---
+
+P_CONNECT.CONF
+
+;параметры:  quality (буфер), context (буфер)
+out "A " CurrentSystemName() ": P_CONNECT.CONF" 
+$apcon_ == "GS" if gs_
+$apcon_ == "DT" if dt_
+out "bad apcon: "+$apcon_
+return
+gs_:
+$quality setto gs_s_quality
+$context setto gs_p_context
+out "A " CurrentSystemName() ": P_CONNECT.CONF" " GS"
+timeevent A_ASSOCIATE.CONF associate_timer 0 context $gs_p_context quality $gs_s_quality demand $gs_s_demand
+return
+dt_:
+$quality setto dt_s_quality
+$context setto dt_p_context
+out "A " CurrentSystemName() ": P_CONNECT.CONF" " DT"
+timeevent A_ASSOCIATE.CONF associate_timer 0 context $dt_p_context quality $dt_s_quality demand $dt_s_demand
+return
+
+---
+
+P_CONNECT.IND
+
+;параметры:  address (число), quality (буфер), demand (буфер)
+out "A " CurrentSystemName() ": P_CONNECT.IND " $namer_
+"DT" setto apcon_
+$address setto addr_other
+0 setto conn_starter
+locguide($address) setto namer_
+$quality setto dt_s_quality
+$demand setto dt_s_demand
+namer_buf pack $addr_other 1 $namer_ sizeof(namer_) sizeof(namer_)+1
+timeevent A_ASSOCIATE.IND associate_timer 0 namei $namer_buf quality $dt_s_quality apcon $apcon_
+; сначала ассоциация, потом трансфер_инит
+;eventup A_TRANSFER_INIT.IND namei $namer_ quality $dt_s_quality
+
+---
+
+P_DATA.IND
+
+;параметры:  userdata (буфер)
+out "A " CurrentSystemName() ": P_DATA.IND "
+$apcon_ == "GS" if gs_
+$apcon_ == "DT" if dt_
+out "bad apcon: "+$apcon_
+return
+gs_:
+userdata unbufferit data_type_id 1 tmp_userdata sizeof(userdata)-1
+; 4 - тип буфер
+$data_type_id != 4 if bad_
+subprog process_ans
+;resolve_ind_ if $lg_id == 0
+$lg_id == 0 if release_
+$WAIT == $addr_got if wait_for_timer_
+bad_:
+out "bad try to find other system address"
+return
+wait_for_timer_:
+out "wait for address of other system"
+return
+release_:
+timeevent A_RELEASE.REQ release_timer 0 apcon $apcon_
+return
+
+dt_:
+$userdata setto msg_buf
+sendup userdata $msg_buf A_DATA.IND
+return
+;------------------------------
+; разбор ответа глобального справочника
+;------------------------------
+substart process_ans
+out $userdata
+tmp_userdata unbufferit lg_id 1 tmp_addr 1 
+$lg_id == 0 if set_addr_
+(($lg_id == 1) || ($lg_id == 2)) if wait_
+;ask_global_subprog_ if $lg_id == 3
+(($lg_id == 4) || ($lg_id == 3)) if bad_req_
+out "bad globalguide answer id"
+out $lg_id
+goto subprog_exit_
+; адрес есть в удаленном справочнике
+set_addr_:
+out "found address in global"
+$KNOW_ADDR setto addr_got
+;set_addr_other_ if $tmp_namer == $namer_
+;out "tmp_namer != namer_ ???"
+;goto subprog_exit_
+set_addr_other_:
+$tmp_addr setto addr_other
+goto subprog_exit_
+; надо подождать
+wait_:
+$WAIT setto addr_got
+$lg_id == 1 if w_st_
+$lg_id == 2 if w_btw_
+goto subprog_exit_
+w_st_:
+tmp_userdata unbufferit lg_id 1 tmp_addr 1 wait_start 1
+$wait_start setto wait_end
+goto wait_timer_
+w_btw_:
+tmp_userdata unbufferit lg_id 1 tmp_addr 1 wait_start 1 wait_end 1
+goto wait_timer_
+wait_timer_:
+out "Lets wait for address"
+out $wait_start
+out $wait_end
+$wait_start > $TRANS_DELAY if set_wait_
+;set_trans_delay_:
+$TRANS_DELAY setto wait_global
+goto wait_for_try
+set_wait_:
+$wait_start+1-($TRANS_DELAY/2) setto wait_global
+wait_for_try:
+timeevent TRY_GET_ADDRESS_FROM_GLOBAL globalguide_timer $wait_global 
+goto subprog_exit_
+bad_req_:
+out "Globalguide answer is 4 or 3, exit..."
+subprog_exit_:
+subend
+
+---
+
+P_GIVE_TOKENS.IND
+
+;параметры:  token (число)
+out "A " CurrentSystemName() ": P_GIVE_TOKENS.IND " $token
+$token == 1 if repeat_data_
+$token == 2 if repeat_sync_
+return
+repeat_data_:
+userdata $msg_buf eventdown P_DATA.REQ
+return
+repeat_sync_:
+timeevent A_SYNC.REQ sync_timer 1 
+return
+
+---
+
+P_P_ABORT.IND
+
+;параметры:  нет
+out "A " CurrentSystemName() ": P_P_ABORT.IND"
+sendup A_P_ABORT.IND 
+0 setto conn_starter
+$INITIAL_ST setto state
+"" setto apcon_
+
+---
+
+P_P_EXCEPTION.IND
+
+;параметры:  error (число)
+out "A " CurrentSystemName() ": P_P_EXCEPTION.IND"
+$error == 1 if ask_data_token_
+$error == 2 if ask_sync_token_
+return
+ask_data_token_:
+token 1 eventdown P_PLEASE_TOKENS.REQ
+return
+ask_sync_token_:
+token 2 eventdown P_PLEASE_TOKENS.REQ
+return
+
+---
+
+P_PLEASE_TOKENS.IND
+
+;параметры:  token (число)
+out "A " CurrentSystemName() ": P_PLEASE_TOKENS.IND " $token
+$token setto token_
+;gs_ if $apcon_ == "GS"
+;out "bad apcon: "+$apcon_
+;return
+;gs_:
+token $token_ eventdown P_GIVE_TOKENS.REQ
+
+---
+
+P_RELEASE.CONF
+
+;параметры:  нет
+out "A " CurrentSystemName() ": P_RELEASE.CONF " $apcon_
+$apcon_ == "" if exit_
+timeevent A_RELEASE.CONF release_timer 0 apcon $apcon_
+exit_:
+
+---
+
+P_RELEASE.IND
+
+;параметры:  нет
+out "A " CurrentSystemName() ": P_RELEASE.IND " $state
+$state == $INITIAL_ST if exit_
+timeevent A_RELEASE.IND release_timer 0 apcon $apcon_
+exit_:
+return
+
+---
+
+P_SYNC_MAJOR.CONF
+
+;параметры:  нет
+out "A " CurrentSystemName() ": P_SYNC_MAJOR.CONF "  $apcon_
+;gs_ if $apcon_ == "GS"
+;out "bad apcon: "+$apcon_
+;return
+;gs_:
+
+---
+
+P_SYNC_MAJOR.IND
+
+;параметры:  нет
+out "A " CurrentSystemName() ": P_SYNC_MAJOR.IND "
+P_SYNC_MAJOR.RESP eventdown 
+
+---
+
+P_U_ABORT.IND
+
+;параметры:  нет
+out "A " CurrentSystemName() ": P_U_ABORT.IND"
