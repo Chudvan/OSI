@@ -758,7 +758,7 @@ timeevent TIMER_RECONNECT transport_reconnect_timer 260
 
 ---
 
-TIMER_NORMAL_DISCON_INIT
+TIMER_NORMAL_DISCONNECT
 
 out "S " CurrentSystemName() ": TIMER_NORMAL_DISCONNECT"
 $normal_discon_wait_try==0 if stop_try_normal_discon
