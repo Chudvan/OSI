@@ -9,13 +9,7 @@ S_INIT.REQ
 ; Является ли инициатором соединения
 integer declare is_con_init
 
-; Защита на сеансовом уровне
-integer declare protection
-1 setto protection
-
-; Начальный номер точки главной синхронизации
-integer declare major_sync_start
-1 setto major_sync_start
+integer declare is_discon_init
 
 ; Токены, полученные в требованиях по обслуживанию(demand)
 integer declare tokens
@@ -26,11 +20,14 @@ integer declare has_data_token
 ; Имеет маркер синхронизации
 integer declare has_sync_token
 
-; Адрес системы A
-integer declare addrA
+; Адрес взаимодействующей системы 
+integer declare addr
 
-; Адрес системы B
-integer declare addrB
+; качество сервиса
+buffer declare quality_
+
+; требования
+buffer declare demand_
 
 ; Таймер повторного соединения
 integer declare transport_reconnect_timer
@@ -43,10 +40,6 @@ integer declare is_connecting
 
 ; Таймер задержки между разъединением и соединением
 integer declare transport_discon_delay_timer
-
-; Качество обслуживания
-buffer declare qos
-qos pack 1 1 1 1 2
 
 ; Отправляемый пакет транспортного уровня
 buffer declare packet
@@ -129,18 +122,94 @@ integer declare normal_discon_wait_times
 ; Идет безусловный разрыв соединения пользователем
 integer declare user_forced_discon
 
+integer declare delay_time
+20 setto delay_time
+
+integer declare vars_init_time
+50 setto vars_init_time
+
+integer declare wait_token
+0 setto wait_token
+
+integer declare last_exp_sent
+integer declare last_exp_received
+0 setto last_exp_sent
+0 setto last_exp_received
+
+integer declare is_prev_sync_init
+0 setto is_prev_sync_init
+
+;Состояния системы (state):
+integer declare state
+;Начальное состояние
+integer declare INITIAL
+1 setto INITIAL
+$INITIAL setto state ;Начальное состояние - инициализация
+;Пришёл запрос на установление сеансового соединения, послан запрос на установление транспортного соединения
+integer declare WAIT_T_CONN
+2 setto WAIT_T_CONN
+;Пришло подтверждение установления транспортного соединения, начинаем переговоры
+integer declare T_CONN_DONE
+3 setto T_CONN_DONE
+;Пришла индикация установления транспортного соединения, отправляем ответ транспортного соединения
+integer declare T_CONN_RESP
+4 setto T_CONN_RESP
+;Пришли параметры, отправляем их наверх
+integer declare S_CONN_IND
+5 setto S_CONN_IND
+;Сеансовое соединение установлено
+integer declare S_CONN_DONE
+6 setto S_CONN_DONE
+;Получен запрос на передачу сеансовых данных, при этом система не имеет маркера на передачу данных
+integer declare S_DATA_NO_MARKER
+7 setto S_DATA_NO_MARKER
+;Получен запрос на запрос маркера данных
+integer declare NEED_MARKER
+8 setto NEED_MARKER
+;Получен запрос на получения маркера
+integer declare WAIT_GIVE_TOKEN
+9 setto WAIT_GIVE_TOKEN
+;Получен запрос на релиз соединения
+integer declare WAIT_RELEASE
+10 setto WAIT_RELEASE
+;Получена индикация синхронизации
+integer declare SYNC_IND
+11 setto SYNC_IND
+;Получен запрос на релиз от другой системы
+integer declare RELEASE_IND
+12 setto RELEASE_IND
+;Получен запрос на синхронизацию, при этом есть маркер синхронизации
+integer declare WAIT_SYNC
+13 setto WAIT_SYNC
+;Получен запрос на синхронизацию, при этом нет маркера синхронизации
+integer declare NO_SYNC_MARKER
+14 setto NO_SYNC_MARKER
+;Получен запрос на ресинхронизацию
+integer declare WAIT_RESYNC
+17 setto WAIT_RESYNC
+;Получен запрос на ресинхронизацию от другой системы
+integer declare RESYNC_IND
+18 setto RESYNC_IND
+;Пришёл запрос БЕЗУСЛОВНОГО дисконнекта 
+integer declare WAIT_U_ABORT
+19 setto WAIT_U_ABORT
+;Потерян маркер
+integer declare LOST_TOKEN
+20 setto LOST_TOKEN
+
 ---
 
 S_CONNECT.REQ
 
 ;ut "пришeл запрос S_CONNECT.REQ" 
-$address setto addrB 
-;ut "адрес " $address 
-;npack protection 1 major_sync_start 1 quality 
-;ut "защита " $protection ", синх. " $major_sync_start 
+out "S " CurrentSystemName() ": S_CONNECT.REQ"
+$WAIT_T_CONN setto state
+$address setto addr 
+$quality setto quality_
+$demand setto demand_
 demand unbufferit tokens 1
-;ut "маркеры " $tokens 
-address $addrB  eventdown T_CONNECT.REQ
+
+address $addr  eventdown T_CONNECT.REQ
 timeevent TIMER_RECONNECT transport_reconnect_timer 260 
 1 setto transport_con_try 
 1 setto is_con_init 
@@ -151,6 +220,8 @@ timeevent TIMER_RECONNECT transport_reconnect_timer 260
 S_CONNECT.RESP
 
 ;ut "пришел ответ S_CONNECT.RESP" 
+out "S " CurrentSystemName() ": S_CONNECT.RESP"
+$S_CONN_DONE setto state
 packet pack 2 1 $quality sizeof(quality) sizeof(quality)+1
 userdata $packet  eventdown T_DATA.REQ
 0 setto user_forced_discon
@@ -160,6 +231,7 @@ userdata $packet  eventdown T_DATA.REQ
 S_DATA.REQ
 
 ;reak 
+out "S " CurrentSystemName() ": S_DATA.REQ"
 0 setto sync 
 0 setto resync 
 varcrc packet_crc $userdata 
@@ -185,32 +257,50 @@ userdata $packet  eventdown T_DATA.REQ
 
 S_EXPEDITED_DATA.REQ
 
-packet pack 9 1 $userdata sizeof(userdata) sizeof(userdata)+1
+out "S " CurrentSystemName() ": S_EXPEDITED_DATA.REQ"
+
+; увеличиваем номер исходящего пакета
+($last_exp_sent + 1) setto last_exp_sent
+
+packet pack 9 1 $last_exp_sent 1 $userdata sizeof(userdata) sizeof(userdata)+2
+userdata $packet  eventdown T_DATA.REQ
+userdata $packet  eventdown T_DATA.REQ
 userdata $packet  eventdown T_DATA.REQ
 
 ---
 
 S_GIVE_TOKENS.REQ
 
+out "S " CurrentSystemName() ": S_GIVE_TOKENS.REQ " $token
 $token==1 if data_token
 $token==2 if sync_token
 data_token: 
 $has_data_token==0 if token_error
 0 setto has_data_token 
 0 setto should_have_data_token 
-goto continue 
+($wait_token / 2) setto wait_token
+goto change_state 
 sync_token: 
 $has_sync_token==0 if token_error
 0 setto has_sync_token 
 0 setto should_have_sync_token 
-goto continue 
+($wait_token % 2) setto wait_token
+goto change_state 
+change_state: 
+($wait_token != 0) if continue
+;else
+$S_CONN_DONE setto state
 continue: 
 packet pack 8 1 $token 1 2
 ;_DATA.REQ generatedown userdata $packet 
 userdata $packet  eventdown T_DATA.REQ
+userdata $packet  eventdown T_DATA.REQ
+userdata $packet  eventdown T_DATA.REQ
 return 
 token_error: 
 ;reak 
+$WAIT_RESYNC setto state
+0 setto wait_token
 sendup error 3  S_P_EXCEPTION.IND
 
 ---
@@ -218,10 +308,14 @@ sendup error 3  S_P_EXCEPTION.IND
 S_PLEASE_TOKENS.REQ
 
 ;reak 
+out "S " CurrentSystemName() ": S_PLEASE_TOKENS.REQ " $token " " $has_data_token " " $has_sync_token
 ;if (($resync) || ($has_data_token) || ($has_sync_token)) give_token 
-(($resync) || (($has_data_token==1) && ($token==1)) || (($has_sync_token==1) && ($token==2))) if give_token
+((($has_data_token==1) && ($token==1)) || (($has_sync_token==1) && ($token==2))) if give_token
 $token setto req_token 
+$NEED_MARKER setto state
 packet pack 7 1 $token 1 2
+userdata $packet  eventdown T_DATA.REQ
+userdata $packet  eventdown T_DATA.REQ
 userdata $packet  eventdown T_DATA.REQ
 ;_DATA.REQ generatedown userdata $packet 
 $token==1 if asked_for_data
@@ -233,6 +327,7 @@ asked_for_sync:
 1 setto should_have_sync_token 
 return 
 give_token: 
+$INITIAL setto state
 sendup token $token  S_GIVE_TOKENS.IND
 
 ---
@@ -240,14 +335,16 @@ sendup token $token  S_GIVE_TOKENS.IND
 S_RELEASE.REQ
 
 ;reak 
+out "S " CurrentSystemName() ": S_RELEASE.REQ"
 1 setto user_normal_discon 
+1 setto is_discon_init
 qcount(out_queue) > 0 if wait
 packet pack 12 1 0 1 2
 userdata $packet  eventdown T_DATA.REQ
 ;ut "запрос правильного завершения соединения, исходящих нет, отравляем сразу" 
 return 
 wait: 
-timeevent TIMER_NORMAL_DISCON_INIT normal_discon_wait_timer 250 
+timeevent TIMER_NORMAL_DISCON_INIT normal_discon_wait_timer 50 
 3 setto normal_discon_wait_times 
 ;ut "запрос правильного завершения соединения, есть исходящие, ждем-" qcount(out_queue) 
 
@@ -255,20 +352,22 @@ timeevent TIMER_NORMAL_DISCON_INIT normal_discon_wait_timer 250
 
 S_RELEASE.RESP
 
+out "S " CurrentSystemName() ": S_RELEASE.RESP"
 qcount(out_queue) > 0 if wait
-address $addrB  eventdown T_DISCONNECT.REQ
+address $addr eventdown T_DISCONNECT.REQ
 timeevent TIMER_DISCON_VARS_INIT init_state 1 
 ;ut "ответ правильного завершения соединения" 
 return 
 wait: 
-timeevent TIMER_NORMAL_DISCON_INIT normal_discon_wait_timer 250 
-3 setto normal_discon_wait_times 
+timeevent TIMER_NORMAL_DISCON_INIT normal_discon_wait_timer 50 
+3 setto normal_discon_wait_times  
 
 ---
 
 S_RESYNCHRONIZE.REQ
 
 ;reak 
+out "S " CurrentSystemName() ": S_RESYNCHRONIZE.REQ " $token 
 packet pack 10 1 $token 1 2
 ;_DATA.REQ generatedown userdata $packet 
 userdata $packet  eventdown T_DATA.REQ
@@ -281,53 +380,71 @@ clearqueue in_queue
 
 S_RESYNCHRONIZE.RESP
 
+out "S " CurrentSystemName() ": S_RESYNCHRONIZE.RESP"
 packet pack 11 1 $token 1 2
 ;_DATA.REQ generatedown userdata $packet 
 userdata $packet  eventdown T_DATA.REQ
 ;ut CurrentSystemName () ": маркеры в ответе на ресинхронизацию " $token 
-$token==1 if sync_token
-$token==2 if data_token
-$token==3 if neither
-$token==4 if both
-both: 
-;reak 
+$token setto resync_tokens
+subprog set_resync_markers
+0 setto resync 
+return
+
+;------------------------
+; установить маркеры, которые будут активны после ресинхронизации
+; значение $resync_tokens уже инвертировано при приеме conf
+;------------------------
+substart set_resync_markers
+$resync_tokens==1 if resync_data_token
+$resync_tokens==2 if resync_sync_token
+$resync_tokens==3 if resync_both
+$resync_tokens==4 if resync_neither
+resync_both: 
 1 setto has_data_token 
 1 setto has_sync_token 
 1 setto should_have_data_token 
 1 setto should_have_sync_token 
-return 
-neither: 
+goto resync_end_
+resync_neither: 
 0 setto has_data_token 
 0 setto has_sync_token 
 0 setto should_have_data_token 
 0 setto should_have_sync_token 
-return 
-data_token: 
+goto resync_end_
+resync_data_token: 
 1 setto has_data_token 
 0 setto has_sync_token 
 1 setto should_have_data_token 
 0 setto should_have_sync_token 
-return 
-sync_token: 
+goto resync_end_
+resync_sync_token: 
 0 setto has_data_token 
 1 setto has_sync_token 
 0 setto should_have_data_token 
 1 setto should_have_sync_token 
+goto resync_end_
+resync_end_:
+subend
 
 ---
 
 S_SYNC_MAJOR.REQ
 
+out "S " CurrentSystemName() ": S_SYNC_MAJOR.REQ"
 $resync==1 if exit
 $has_sync_token==0 if no_sync_token
 ;�тправляем запрос главной синхронизации. Данные-сумма контрольных сумм по всем отправленным userdata 
+$WAIT_SYNC setto state
 packet pack 4 1 $crc_sum_out 1 2
 ;_DATA.REQ generatedown userdata $packet 
+userdata $packet  eventdown T_DATA.REQ
+userdata $packet  eventdown T_DATA.REQ
 userdata $packet  eventdown T_DATA.REQ
 1 setto sync 
 return 
 no_sync_token: 
 ;reak 
+$NO_SYNC_MARKER setto state
 $should_have_sync_token==1 if lost_token
 sendup error 2  S_P_EXCEPTION.IND
 ;ut "no sync token ! " 
@@ -335,6 +452,7 @@ sendup error 2  S_P_EXCEPTION.IND
 return 
 lost_token: 
 ;reak 
+$LOST_TOKEN setto state
 packet pack 6 1 0 1 2
 userdata $packet  eventdown T_DATA.REQ
 exit: 
@@ -343,28 +461,37 @@ exit:
 
 S_SYNC_MAJOR.RESP
 
+out "S " CurrentSystemName() ": S_SYNC_MAJOR.RESP"
+$S_CONN_DONE setto state
 packet pack 5 1 1 1 2
 ;_DATA.REQ generatedown userdata $packet 
 userdata $packet  eventdown T_DATA.REQ
-0 setto crc_sum_in 
+userdata $packet  eventdown T_DATA.REQ
+userdata $packet  eventdown T_DATA.REQ
+0 setto crc_sum_in  
 
 ---
 
 S_U_ABORT.REQ
 
 ;reak 
+out "S " CurrentSystemName() ": S_U_ABORT.REQ"
+$WAIT_U_ABORT setto state
 packet pack 14 1 0 1 2
 userdata $packet  eventdown T_DATA.REQ
-1 setto user_forced_discon 
+userdata $packet  eventdown T_DATA.REQ
+userdata $packet  eventdown T_DATA.REQ
+1 setto user_forced_discon  
 
 ---
 
 T_CONNECT.CONF
 
 ;ut "пришло подтверждение T_CONNECT.CONF" 
-untimer $transport_reconnect_timer 
+out "S " CurrentSystemName() ": T_CONNECT.CONF"
+$T_CONN_DONE setto state
 ;�тправляем параметры требования по обслуживанию (маркеры) 
-packet pack 1 1 $tokens 1 2
+packet pack 1 1 $quality_ 2 $demand_ 1 4
 userdata $packet  eventdown T_DATA.REQ
 $tokens==1 if both
 $tokens==2 if neither
@@ -395,7 +522,9 @@ sync_token:
 T_CONNECT.IND
 
 ;ut "пришла индикация T_CONNECT.IND" 
-$address setto addrA 
+out "S " CurrentSystemName() ": T_CONNECT.IND"
+$T_CONN_RESP setto state
+$address setto addr
 address $address  eventdown T_CONNECT.RESP
 
 ---
@@ -404,11 +533,14 @@ T_DATA.IND
 
 sizeof(userdata) < 2 if exit
 userdata unbufferit type 1 data sizeof(userdata)-1
+(($type==4) || ($type==5) || ($type==7) || ($type==8) || ($type==9)) if no_debug
+	out "S " CurrentSystemName() ": T_DATA.IND " $type
+no_debug:
 $type==1 if param_propose
 $type==2 if param_conf
 $type==3 if userdata
-$type==4 if sync_request
-$type==5 if sync_conf
+(($type==4) && ($sync==0)) if sync_request
+(($type==5) && ($sync==1)) if sync_conf
 $type==6 if sync_error
 $type==7 if token_request
 $type==8 if token_given
@@ -417,13 +549,15 @@ $type==10 if resync_request
 $type==11 if resync_response
 $type==12 if normal_discon_request
 $type==14 if forced_discon_request
-out "неизвестный тип пакета ! " 
-retrurn 
+;out "неизвестный тип пакета ! " 
+return 
 
 param_propose: 
 ;ut "пришла индикация S_CONNECT.IND" 
-sendup address $addrA quality $qos demand $data  S_CONNECT.IND
-data unbufferit tokens 1
+$S_CONN_IND setto state
+data unbufferit quality_ 2 demand_ 1
+sendup address $addr quality $quality_ demand $demand_ S_CONNECT.IND
+demand_ unbufferit tokens 1
 $tokens==1 if neither
 $tokens==2 if both
 $tokens==3 if sync_token
@@ -451,6 +585,7 @@ return
 
 param_conf: 
 ;ut "пришло подтверждение S_CONNECT.CONF" 
+$S_CONN_DONE setto state
 sendup quality $data  S_CONNECT.CONF
 untimer $transport_reconnect_timer 
 0 setto is_connecting 
@@ -463,7 +598,8 @@ queue $data in_queue
 return 
 
 sync_request: 
-$sync==1 if exit
+out "S " CurrentSystemName() ": T_DATA.IND " $type
+$SYNC_IND setto state
 1 setto sync 
 0 setto resync 
 data unbufferit inc_crc_sum 1
@@ -474,7 +610,8 @@ timeevent TIMER_SEND_FROM_IN_QUEUE send_from_in_queue_timer 1
 return 
 
 sync_conf: 
-$sync==0 if exit
+out "S " CurrentSystemName() ": T_DATA.IND " $type
+$S_CONN_DONE setto state
 0 setto crc_sum_out 
 clearqueue out_queue 
 sendup  S_SYNC_MAJOR.CONF
@@ -488,9 +625,12 @@ return
 
 token_request: 
 data unbufferit req_token 1
+($req_token==1) && (($has_data_token==0) || (($wait_token % 2)==1)) if exit
+($req_token==2) && (($has_sync_token==0) || (($wait_token / 2)==1))  if exit
+out "S " CurrentSystemName() ": T_DATA.IND " $type " " $req_token
+$WAIT_GIVE_TOKEN setto state
+($wait_token | $req_token) setto wait_token
 0 setto sync 
-($req_token==1) && ($has_data_token==0) if exit
-($req_token==2) && ($has_sync_token==0) if exit
 sendup token $req_token  S_PLEASE_TOKENS.IND
 ;�а случай, если не пришло подтверждение синхронизации, т.к. маркер запрашивается сразу после 
 0 setto crc_sum_out 
@@ -512,21 +652,33 @@ $has_sync_token==1 if already_has_token
 1 setto has_sync_token 
 goto give_token 
 give_token: 
+out "S " CurrentSystemName() ": T_DATA.IND " $type " " $given_token
+$S_CONN_DONE setto state
 sendup token $given_token  S_GIVE_TOKENS.IND
 return 
 already_has_token: 
 ;reak 
+$WAIT_RESYNC setto state
 sendup error 3  S_P_EXCEPTION.IND
 return 
 
 exp_data: 
+data unbufferit last_exp_sent 1 data sizeof(data)-1
+;Проверяем номер принятого пакета
+($last_exp_sent <= $last_exp_received) if dublicate
+$last_exp_sent setto last_exp_received
+out "S " CurrentSystemName() ": T_DATA.IND " $type
 sendup userdata $data  S_EXPEDITED_DATA.IND
+dublicate:
 return 
 
 resync_request: 
 $resync==1 if exit
 0 setto crc_sum_out 
 data unbufferit resync_tokens 1
+out "S " CurrentSystemName() ": resync_tokens was " $resync_tokens
+subprog inverse_markers
+out "S " CurrentSystemName() ": resync_tokens become " $resync_tokens
 qcount(out_queue) setto send_resync_count 
 timeevent TIMER_SEND_FROM_OUT_QUEUE send_from_out_queue_timer 1 
 1 setto resync 
@@ -534,8 +686,14 @@ return
 
 resync_response: 
 $resync==0 if exit
-0 setto sync 
 data unbufferit resync_tokens 1
+out "S " CurrentSystemName() ": resync_tokens was " $resync_tokens
+subprog inverse_markers
+out "S " CurrentSystemName() ": resync_tokens become " $resync_tokens
+$inc_crc_sum != $crc_sum_in if sync_error
+out "S " CurrentSystemName() ": контрольные суммы совпали"
+0 setto sync 
+0 setto resync
 sendup token $resync_tokens  S_RESYNCHRONIZE.CONF
 ;�сли в системе B не дергать отправку наверх сразу после ресинх., она не пошлет свой блок данных и при 
 ;�олучении в следующий раз сразу 2 блоков мы получим потерю и дубликат 
@@ -543,33 +701,7 @@ sendup token $resync_tokens  S_RESYNCHRONIZE.CONF
 sendup  S_SYNC_MAJOR.IND
 qcount(in_queue) setto send_up_count 
 timeevent TIMER_SEND_FROM_IN_QUEUE send_from_in_queue_timer 1 
-$resync_tokens==1 if resync_data_token
-$resync_tokens==2 if resync_sync_token
-$resync_tokens==3 if resync_both
-$resync_tokens==4 if resync_neither
-resync_both: 
-1 setto has_data_token 
-1 setto has_sync_token 
-1 setto should_have_data_token 
-1 setto should_have_sync_token 
-return 
-resync_neither: 
-0 setto has_data_token 
-0 setto has_sync_token 
-0 setto should_have_data_token 
-0 setto should_have_sync_token 
-return 
-resync_data_token: 
-1 setto has_data_token 
-0 setto has_sync_token 
-1 setto should_have_data_token 
-0 setto should_have_sync_token 
-return 
-resync_sync_token: 
-0 setto has_data_token 
-1 setto has_sync_token 
-0 setto should_have_data_token 
-1 setto should_have_sync_token 
+subprog set_resync_markers
 return 
 
 normal_discon_request: 
@@ -580,17 +712,89 @@ return
 
 forced_discon_request: 
 ;ut CurrentSystemName () ": пришел запрос безусловного разъединения S_U_ABORT" 
-sendup  S_U_ABORT.IND
-address $addrA  eventdown T_DISCONNECT.REQ
-timeevent TIMER_DISCON_VARS_INIT init_state 1 
-return 
+	($state == $WAIT_U_ABORT) if WaitUAbort
+	;else
+		out "S " "UABort"
+		$WAIT_U_ABORT setto state
+		sendup S_U_ABORT.IND
+		address $addr eventdown T_DISCONNECT.REQ
+		timeevent TIMER_DISCON_VARS_INIT init_state $vars_init_time
+		return
+	WaitUAbort:
+		address $addr eventdown T_DISCONNECT.REQ
+		untimer $init_state
+		timeevent TIMER_DISCON_VARS_INIT init_state $vars_init_time
+		return
+
 exit: 
+return
+
+;------------------------
+; код маркеров ресинхронизации в то, что достается этой стороне
+;------------------------
+substart inverse_markers
+$resync_tokens == 1 if inv_data_
+$resync_tokens == 2 if inv_sync_
+$resync_tokens == 3 if inv_all_
+$resync_tokens == 4 if inv_none_
+goto inv_end_
+inv_data_:
+2 setto resync_tokens
+goto inv_end_
+inv_sync_:
+1 setto resync_tokens
+goto inv_end_
+inv_all_:
+4 setto resync_tokens
+goto inv_end_
+inv_none_:
+3 setto resync_tokens
+goto inv_end_
+inv_end_:
+subend
+
+;------------------------
+; установить маркеры, которые будут активны после ресинхронизации
+; значение $resync_tokens уже инвертировано при приеме conf
+;------------------------
+substart set_resync_markers
+$resync_tokens==1 if resync_data_token
+$resync_tokens==2 if resync_sync_token
+$resync_tokens==3 if resync_both
+$resync_tokens==4 if resync_neither
+resync_both: 
+1 setto has_data_token 
+1 setto has_sync_token 
+1 setto should_have_data_token 
+1 setto should_have_sync_token 
+goto resync_end_
+resync_neither: 
+0 setto has_data_token 
+0 setto has_sync_token 
+0 setto should_have_data_token 
+0 setto should_have_sync_token 
+goto resync_end_
+resync_data_token: 
+1 setto has_data_token 
+0 setto has_sync_token 
+1 setto should_have_data_token 
+0 setto should_have_sync_token 
+goto resync_end_
+resync_sync_token: 
+0 setto has_data_token 
+1 setto has_sync_token 
+0 setto should_have_data_token 
+1 setto should_have_sync_token 
+goto resync_end_
+resync_end_:
+subend
 
 ---
 
 T_DISCONNECT.IND
 
 ;ut "пришла индикация дисконнекта T_DISCONNECT.IND" 
+out "S " CurrentSystemName() ": T_DISCONNECT.IND"
 ($user_normal_discon==1) || ($user_forced_discon==1) if user_discon
 ;reak 
 $is_connecting if exit
@@ -609,6 +813,8 @@ exit:
 
 TIMER_DISCON_VARS_INIT
 
+out "S " CurrentSystemName() ": TIMER_DISCON_VARS_INIT"
+$INITIAL setto state
 0 setto has_data_token 
 0 setto has_sync_token 
 untimer $transport_reconnect_timer 
@@ -628,23 +834,29 @@ untimer $send_from_out_queue_timer
 0 setto user_normal_discon 
 0 setto init_state 
 untimer $normal_discon_wait_timer 
+0 setto is_con_init 
+0 setto is_discon_init
 0 setto is_connecting 
+0 setto last_exp_sent
+0 setto last_exp_received
 
 ---
 
 TIMER_DISCONNECT_DELAY
 
-address $addrB  eventdown T_CONNECT.REQ
-timeevent TIMER_RECONNECT transport_reconnect_timer 260 
+out "S " CurrentSystemName() ": TIMER_DISCONNECT_DELAY"
+address $addr eventdown T_CONNECT.REQ
+timeevent TIMER_RECONNECT transport_reconnect_timer 260
 
 ---
 
 TIMER_NORMAL_DISCON_INIT
 
+out "S " CurrentSystemName() ": TIMER_NORMAL_DISCON_INIT"
 $normal_discon_wait_times==0 if stop_try_normal_discon
 qcount(out_queue) > 0 if wait
-$is_con_init==1 if req
-address $addrA  eventdown T_DISCONNECT.REQ
+$is_discon_init==1 if req
+address $addr  eventdown T_DISCONNECT.REQ
 timeevent TIMER_DISCON_VARS_INIT init_state 1 
 return 
 req: 
@@ -656,7 +868,7 @@ timeevent TIMER_NORMAL_DISCON_INIT normal_discon_wait_timer 250
 $normal_discon_wait_times-1 setto normal_discon_wait_times 
 return 
 stop_try_normal_discon: 
-$is_con_init==0 if exit
+$is_discon_init==0 if exit
 packet pack 14 1 0 1 2
 userdata $packet  eventdown T_DATA.REQ
 1 setto user_forced_discon 
@@ -666,10 +878,10 @@ exit:
 
 TIMER_RECONNECT
 
-out "RECONNECT"
+out "S " CurrentSystemName() ": TIMER_RECONNECT"
 $transport_con_try > 3 if stop_try_reconnect
-address $addrB  eventdown T_DISCONNECT.REQ
-timeevent TIMER_DISCONNECT_DELAY transport_discon_delay_timer 25 
+address $addr  eventdown T_DISCONNECT.REQ
+timeevent TIMER_DISCONNECT_DELAY transport_discon_delay_timer (2*$delay_time + 1)
 out CurrentSystemName () ": повторная отправка запроса на транспортное соединение " $transport_con_try 
 $transport_con_try+1 setto transport_con_try 
 return 
@@ -680,6 +892,7 @@ sendup  S_P_ABORT.IND
 
 TIMER_SEND_FROM_IN_QUEUE
 
+out "S " CurrentSystemName() ": TIMER_SEND_FROM_IN_QUEUE"
 $send_up_count==0 if all_sent
 dequeue(in_queue) setto data_from_in_queue 
 sendup userdata $data_from_in_queue  S_DATA.IND
@@ -692,14 +905,16 @@ all_sent:
 
 TIMER_SEND_FROM_OUT_QUEUE
 
+out "S " CurrentSystemName() ": TIMER_SEND_FROM_OUT_QUEUE"
 $send_resync_count==0 if all_sent
 dequeue(out_queue) setto data_from_out_queue 
 varcrc packet_crc $data_from_out_queue 
 $crc_sum_out+$packet_crc setto crc_sum_out 
+queue $data_from_out_queue out_queue ; в конец очереди
 packet pack 3 1 $data_from_out_queue sizeof(data_from_out_queue) sizeof(data_from_out_queue)+1
 userdata $packet  eventdown T_DATA.REQ
 timeevent TIMER_SEND_FROM_OUT_QUEUE send_from_out_queue_timer 1 
 $send_resync_count-1 setto send_resync_count 
 return 
 all_sent: 
-sendup token $resync_tokens  S_RESYNCHRONIZE.IND
+sendup token $resync_tokens S_RESYNCHRONIZE.IND
