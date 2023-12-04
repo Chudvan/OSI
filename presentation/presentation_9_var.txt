@@ -1,0 +1,490 @@
+P_INIT.REQ
+
+integer declare pAddress
+buffer declare pQuality
+buffer declare pContext
+string declare openBracket
+string declare closeBracket
+integer declare ourSyntax
+integer declare inSyntax
+integer declare finalSyntax
+buffer declare packageBuffer
+integer declare packageType
+buffer declare data
+buffer declare tmp
+string declare workString
+string declare sound
+string declare action
+string declare colour
+string declare scent
+integer declare size
+
+---
+
+P_CONNECT.REQ
+
+;параметры:  address (число), quality (буфер), demand (буфер), context (буфер)
+$address setto pAddress
+context unbufferit openBracket 1 closeBracket 1 data sizeof(context)-2
+sizeof(data)==2 if both
+; else
+one:
+data unbufferit ourSyntax 1
+	goto continue
+both:
+	3 setto ourSyntax
+continue:
+address $address quality $quality demand $demand eventdown S_CONNECT.REQ
+
+---
+
+P_CONNECT.RESP
+
+;параметры:  address (число), quality (буфер), context (буфер)
+$address setto pAddress
+context unbufferit openBracket 1 closeBracket 1 data sizeof(context)-2
+sizeof(data)==2 if both
+; else
+one:
+data unbufferit ourSyntax 1
+	goto continue
+both:
+	3 setto ourSyntax
+continue:
+address $address quality $quality eventdown S_CONNECT.RESP
+
+---
+
+P_DATA.REQ
+
+;параметры:  userdata (буфер)
+userdata unbufferit packageType 1 workString sizeof(userdata)-1
+$packageType==1 if pStructure
+$packageType==2 if pNumber
+$packageType==3 if pString
+$packageType==4 if pBuffer
+pStructure:
+	copy(workString, 3, sizeof(workString)-2) setto workString
+	copy(workString, 1, pos($closeBracket, workString)-1) setto sound
+	copy(workString, sizeof(sound)+3, sizeof(workString)-sizeof(sound)-2) setto workString
+	copy(workString, 1, pos($closeBracket, workString)-1) setto action
+	copy(workString, sizeof(action)+3, sizeof(workString)-sizeof(action)-2) setto workString
+	copy(workString, 1, pos($closeBracket, workString)-1) setto colour
+	copy(workString, sizeof(colour)+3, sizeof(workString)-sizeof(colour)-2) setto workString
+	copy(workString, 1, pos($closeBracket, workString)-1) setto scent
+$finalSyntax==1 if structureLength
+	; else endCharacter
+data pack 10 1 $sound sizeof(sound) "1337" 4 sizeof(sound)+5
+data pack $data sizeof(data) 20 1 $action sizeof(action) "1337" 4 sizeof(data)+sizeof(action)+5
+data pack $data sizeof(data) 30 1 $colour sizeof(colour) "1337" 4 sizeof(data)+sizeof(colour)+5
+data pack $data sizeof(data) 40 1 $scent sizeof(scent) "1337" 4 sizeof(data)+sizeof(scent)+5
+data pack 1 1 $data sizeof(data)  "1337" 4 sizeof(data)+5
+		goto done
+	structureLength:
+data pack 10 1 sizeof(sound) 1 $sound sizeof(sound) sizeof(sound)+2
+data pack $data sizeof(data) 20 1 sizeof(action) 1 $action sizeof(action) sizeof(data)+sizeof(action)+2
+data pack $data sizeof(data) 30 1 sizeof(colour) 1 $colour sizeof(colour) sizeof(data)+sizeof(colour)+2
+data pack $data sizeof(data) 40 1 sizeof(scent) 1 $scent sizeof(scent) sizeof(data)+sizeof(scent)+2
+data pack 1 1 sizeof(data) 1 $data sizeof(data) sizeof(data)+2
+		goto done
+pNumber:
+$finalSyntax==1 if numberLength
+	; else endCharacter
+data pack $userdata 2 "1337" 4 6
+		goto done
+	numberLength:
+userdata unbufferit packageType 1 tmp 1
+data pack 2 1 1 1 $tmp 1 6
+		goto done
+pString:
+$finalSyntax==1 if stringLength
+	; else endCharacter
+data pack $userdata sizeof(userdata) "1337" 4 sizeof(userdata)+4
+		goto done
+	stringLength:
+userdata unbufferit packageType 1 tmp sizeof(userdata)-1
+data pack 3 1 sizeof(tmp) 1 $tmp sizeof(tmp) sizeof(tmp)+2
+		goto done
+pBuffer:
+$finalSyntax==1 if bufferLength
+	; else endCharacter
+data pack $userdata sizeof(userdata) "1337" 4 sizeof(userdata)+4
+		goto done
+	bufferLength:
+userdata unbufferit packageType 1 tmp sizeof(userdata)-1
+data pack 4 1 sizeof(tmp) 1 $tmp sizeof(tmp) sizeof(tmp)+2
+		goto done
+done:
+userdata $data eventdown S_DATA.REQ
+
+---
+
+P_EXPEDITED_DATA.REQ
+
+userdata unbufferit packageType 1 workString sizeof(userdata)-1
+$packageType==1 if pStructure
+$packageType==2 if pNumber
+$packageType==3 if pString
+$packageType==4 if pBuffer
+pStructure:
+	copy(workString, 3, sizeof(workString)-2) setto workString
+	copy(workString, 1, pos($closeBracket, workString)-1) setto sound
+	copy(workString, sizeof(sound)+3, sizeof(workString)-sizeof(sound)-2) setto workString
+	copy(workString, 1, pos($closeBracket, workString)-1) setto action
+	copy(workString, sizeof(action)+3, sizeof(workString)-sizeof(action)-2) setto workString
+	copy(workString, 1, pos($closeBracket, workString)-1) setto colour
+	copy(workString, sizeof(colour)+3, sizeof(workString)-sizeof(colour)-2) setto workString
+	copy(workString, 1, pos($closeBracket, workString)-1) setto scent
+$finalSyntax==1 if structureLength
+	; else endCharacter
+data pack 10 1 $sound sizeof(sound) "1337" 4 sizeof(sound)+5
+data pack $data sizeof(data) 20 1 $action sizeof(action) "1337" 4 sizeof(data)+sizeof(action)+5
+data pack $data sizeof(data) 30 1 $colour sizeof(colour) "1337" 4 sizeof(data)+sizeof(colour)+5
+		data $data sizeof(data) 40 1 $scent sizeof(scent ) "1337" 4 bufferit sizeof(data)+sizeof(scent )+5
+data pack 1 1 $data sizeof(data)  "1337" 4 sizeof(data)+5
+		goto done
+	structureLength:
+data pack 10 1 sizeof(sound) 1 $sound sizeof(sound) sizeof(sound)+2
+data pack $data sizeof(data) 20 1 sizeof(action) 1 $action sizeof(action) sizeof(data)+sizeof(action)+2
+data pack $data sizeof(data) 30 1 sizeof(colour) 1 $colour sizeof(colour) sizeof(data)+sizeof(colour)+2
+data pack $data sizeof(data) 40 1 sizeof(scent) 1 $scent sizeof(scent) sizeof(data)+sizeof(scent)+2
+data pack 1 1 sizeof(data) 1 $data sizeof(data) sizeof(data)+2
+		goto done
+pNumber:
+$finalSyntax==1 if numberLength
+	; else endCharacter
+data pack $userdata 2 "1337" 4 6
+		goto done
+	numberLength:
+userdata unbufferit packageType 1 tmp 1
+data pack 2 1 1 1 $tmp 1 6
+		goto done
+pString:
+$finalSyntax==1 if stringLength
+	; else endCharacter
+data pack $userdata sizeof(userdata) "1337" 4 sizeof(userdata)+4
+		goto done
+	stringLength:
+userdata unbufferit packageType 1 tmp sizeof(userdata)-1
+data pack 3 1 sizeof(tmp) 1 $tmp sizeof(tmp) sizeof(tmp)+2
+		goto done
+pBuffer:
+$finalSyntax==1 if bufferLength
+	; else endCharacter
+data pack $userdata sizeof(userdata) "1337" 4 sizeof(userdata)+4
+		goto done
+	bufferLength:
+userdata unbufferit packageType 1 tmp sizeof(userdata)-1
+data pack 3 1 sizeof(tmp) 1 $tmp sizeof(tmp) sizeof(tmp)+2
+		goto done
+done:
+userdata $data eventdown S_EXPEDITED_DATA.REQ
+
+---
+
+P_GIVE_TOKENS.REQ
+
+;параметры:  token (число)
+token $token eventdown S_GIVE_TOKENS.REQ
+
+---
+
+P_PLEASE_TOKENS.REQ
+
+;параметры:  token (число)
+token $token eventdown S_PLEASE_TOKENS.REQ
+
+---
+
+P_RELEASE.REQ
+
+;параметры:  нет
+ eventdown S_RELEASE.REQ
+
+---
+
+P_RELEASE.RESP
+
+;параметры:  нет
+ eventdown S_RELEASE.RESP
+
+---
+
+P_RESYNCHRONIZE.REQ
+
+;параметры:  token (число)
+token $token eventdown S_RESYNCHRONIZE.REQ
+
+---
+
+P_RESYNCHRONIZE.RESP
+
+;параметры:  token (число)
+token $token eventdown S_RESYNCHRONIZE.RESP
+
+---
+
+P_SYNC_MAJOR.REQ
+
+;параметры:  нет
+ eventdown S_SYNC_MAJOR.REQ
+
+---
+
+P_SYNC_MAJOR.RESP
+
+;параметры:  нет
+ eventdown S_SYNC_MAJOR.RESP 
+
+---
+
+P_U_ABORT.REQ
+
+;параметры:  нет
+ eventdown S_U_ABORT.REQ 
+
+---
+
+S_CONNECT.CONF
+
+;параметры:  quality (буфер)
+$quality setto pQuality
+packageBuffer pack 100 1 $ourSyntax 1 2
+userdata $packageBuffer eventdown S_EXPEDITED_DATA.REQ
+
+---
+
+S_CONNECT.IND
+
+;параметры:  address (число), quality (буфер), demand (буфер)
+sendup address $address quality $quality demand $demand P_CONNECT.IND
+
+---
+
+S_DATA.IND
+
+;параметры:  userdata (буфер)
+userdata unbufferit packageType 1 workString sizeof(userdata)-1
+$packageType==1 if pStructure
+$packageType==2 if pNumber
+$packageType==3 if pString
+$packageType==4 if pBuffer
+pStructure:
+$finalSyntax==1 if structureLength
+	; else character
+		copy(workString, 2, pos("1337", workString)-2) setto sound
+		copy(workString, pos("1337", workString)+4, sizeof(workString)-sizeof(sound)-5) setto workString
+		copy(workString, 2, pos("1337", workString)-2) setto action
+		copy(workString, pos("1337", workString)+4, sizeof(workString)-sizeof(action)-5) setto workString
+		copy(workString, 2, pos("1337", workString)-2) setto colour
+		copy(workString, pos("1337", workString)+4, sizeof(workString)-sizeof(colour)-5) setto workString
+		copy(workString, 2, pos("1337", workString)-2) setto scent
+		goto packIt
+	structureLength:
+userdata unbufferit packageType 1 tmp 2 size 1 data sizeof(userdata)-4
+data unbufferit sound $size tmp 1 size 1 data sizeof(data)-sizeof(sound)-2
+data unbufferit action $size tmp 1 size 1 data sizeof(data)-sizeof(action)-2
+data unbufferit colour $size tmp 1 size 1 data sizeof(data)-sizeof(colour)-2
+data unbufferit scent $size tmp sizeof(data)-sizeof(scent)
+		goto packIt
+	packIt:
+data pack $openBracket 1 $sound sizeof(sound) $closeBracket 1 sizeof(sound)+2
+data pack $data sizeof(data) $openBracket 1 $action sizeof(action) $closeBracket 1 sizeof(data)+sizeof(action)+2
+data pack $data sizeof(data) $openBracket 1 $colour sizeof(colour) $closeBracket 1 sizeof(data)+sizeof(colour)+2
+data pack $data sizeof(data) $openBracket 1 $scent sizeof(scent) $closeBracket 1 sizeof(data)+sizeof(scent)+2
+data pack 1 1 $openBracket 1 $data sizeof(data) $closeBracket 1 sizeof(data)+3
+	goto done	
+pNumber:
+$finalSyntax==1 if numberLength
+	; else character
+userdata unbufferit data 2 tmp 4
+		goto done
+	numberLength:
+userdata unbufferit packageType 1 size 1 data 1
+data pack $packageType 1 $data $size $size+1
+		goto done
+pString:
+$finalSyntax==1 if stringLength
+	; else character
+userdata unbufferit data sizeof(userdata)-4 tmp 4
+		goto done
+	stringLength:
+userdata unbufferit packageType 1 size 1 data sizeof(userdata)-2
+data pack $packageType 1 $data $size $size+1
+		goto done
+pBuffer:
+$finalSyntax==1 if bufferLength
+	; else character
+userdata unbufferit data sizeof(userdata)-4 tmp 4
+		goto done
+	bufferLength:
+userdata unbufferit packageType 1 size 1 data sizeof(userdata)-2
+data pack $packageType 1 $data $size $size+1
+		goto done
+done:
+sendup userdata $data P_DATA.IND
+
+---
+
+S_EXPEDITED_DATA.IND
+
+;параметры:  userdata (буфер)
+userdata unbufferit packageType 1 data sizeof(userdata)-1
+userdata unbufferit packageType 1 workString sizeof(userdata)-1
+$packageType==1 if pStructure
+$packageType==2 if pNumber
+$packageType==3 if pString
+$packageType==4 if pBuffer
+$packageType==100 if connectReq
+$packageType==101 if connectResp
+pStructure:
+$finalSyntax==1 if structureLength
+	; else character
+		copy(workString, 2, pos("1337", workString)-2) setto sound
+		copy(workString, pos("1337", workString)+4, sizeof(workString)-sizeof(sound)-5) setto workString
+		copy(workString, 2, pos("1337", workString)-2) setto action
+		copy(workString, pos("1337", workString)+4, sizeof(workString)-sizeof(action)-5) setto workString
+		copy(workString, 2, pos("1337", workString)-2) setto colour
+		copy(workString, pos("1337", workString)+4, sizeof(workString)-sizeof(colour)-5) setto workString
+		copy(workString, 2, pos("1337", workString)-2) setto scent
+		goto packIt
+	structureLength:
+userdata unbufferit packageType 1 tmp 2 size 1 data sizeof(userdata)-4
+data unbufferit sound $size tmp 1 size 1 data sizeof(data)-sizeof(sound)-2
+data unbufferit action $size tmp 1 size 1 data sizeof(data)-sizeof(action)-2
+data unbufferit colour $size tmp 1 size 1 data sizeof(data)-sizeof(colour)-2
+data unbufferit scent $size tmp sizeof(data)-sizeof(scent)
+		goto packIt
+	packIt:
+data pack $openBracket 1 $sound sizeof(sound) $closeBracket 1 sizeof(sound)+2
+data pack $data sizeof(data) $openBracket 1 $action sizeof(action) $closeBracket 1 sizeof(data)+sizeof(action)+2
+data pack $data sizeof(data) $openBracket 1 $colour sizeof(colour) $closeBracket 1 sizeof(data)+sizeof(colour)+2
+data pack $data sizeof(data) $openBracket 1 $scent sizeof(scent) $closeBracket 1 sizeof(data)+sizeof(scent)+2
+data pack 1 1 $openBracket 1 $data sizeof(data) $closeBracket 1 sizeof(data)+3
+	goto sendPackage	
+pNumber:
+$finalSyntax==1 if numberLength
+	; else character
+userdata unbufferit data 2 tmp 4
+		goto sendPackage
+	numberLength:
+userdata unbufferit packageType 1 size 1 data 1
+data pack $packageType 1 $data $size $size+1
+		goto sendPackage
+pString:
+$finalSyntax==1 if stringLength
+	; else character
+userdata unbufferit data sizeof(userdata)-4 tmp 4
+		goto sendPackage
+	stringLength:
+userdata unbufferit packageType 1 size 1 data sizeof(userdata)-2
+data pack $packageType 1 $data $size $size+1
+		goto sendPackage
+pBuffer:
+$finalSyntax==1 if bufferLength
+	; else character
+userdata unbufferit data sizeof(userdata)-4 tmp 4
+		goto sendPackage
+	bufferLength:
+userdata unbufferit packageType 1 size 1 data sizeof(userdata)-2
+data pack $packageType 1 $data $size $size+1
+		goto sendPackage
+;======
+connectReq:
+data unbufferit inSyntax 1
+	$inSyntax & $ourSyntax setto finalSyntax
+$finalSyntax != 3 if continue
+	; else
+		1 setto finalSyntax
+	continue: 
+packageBuffer pack 101 1 $finalSyntax 1 2
+userdata $packageBuffer eventdown S_EXPEDITED_DATA.REQ
+	goto done
+connectResp:
+data unbufferit finalSyntax 1
+	out "final syntax"
+	out $finalSyntax
+packageBuffer pack $openBracket 1 $closeBracket 1 $finalSyntax 1 3
+	sendup quality $pQuality context $packageBuffer P_CONNECT.CONF
+	goto done
+
+sendPackage:
+sendup userdata $data P_EXPEDITED_DATA.IND
+done:
+
+---
+
+S_GIVE_TOKENS.IND
+
+;параметры:  token (число)
+sendup token $token P_GIVE_TOKENS.IND 
+
+---
+
+S_P_ABORT.IND
+
+;параметры:  нет
+sendup P_P_ABORT.IND
+
+---
+
+S_P_EXCEPTION.IND
+
+;параметры:  error (число)
+sendup error $error P_P_EXCEPTION.IND
+
+---
+
+S_PLEASE_TOKENS.IND
+
+;параметры:  token (число)
+sendup token $token P_PLEASE_TOKENS.IND
+
+---
+
+S_RELEASE.CONF
+
+;параметры:  нет
+sendup P_RELEASE.CONF
+
+---
+
+S_RELEASE.IND
+
+;параметры:  нет
+sendup P_RELEASE.IND
+
+---
+
+S_RESYNCHRONIZE.CONF
+
+;параметры:  token (число)
+sendup token $token P_RESYNCHRONIZE.CONF 
+
+---
+
+S_RESYNCHRONIZE.IND
+
+;параметры:  token (число) 
+sendup token $token P_RESYNCHRONIZE.IND
+
+---
+
+S_SYNC_MAJOR.CONF
+
+;параметры:  нет
+sendup P_SYNC_MAJOR.CONF
+
+---
+
+S_SYNC_MAJOR.IND
+
+;параметры:  нет
+sendup P_SYNC_MAJOR.IND
+
+---
+
+S_U_ABORT.IND
+
+;параметры:  нет
+sendup P_U_ABORT.IND
