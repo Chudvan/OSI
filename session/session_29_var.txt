@@ -1,0 +1,705 @@
+S_INIT.REQ
+
+;Типы пакетов транспортного уровня: 
+;1-отправка параметров, 2-подтверждение параметров, 3-данные, 4-запрос главной синхронизации,
+;5-подтведждение главной синхронизации, 6-ошибка синхронизации, 7-запрос маркера, 8-отправка маркера,
+;9-срочные данные, 10-запрос на ресинхронизацию, 11-ответ на ресинхронизацию,
+;12-запрос на упоряд. разъединение, 13-ответ на упоряд. разъединение, 14-запрос на безусл. разъединение
+
+; Является ли инициатором соединения
+integer declare is_con_init
+
+; Защита на сеансовом уровне
+integer declare protection
+1 setto protection
+
+; Начальный номер точки главной синхронизации
+integer declare major_sync_start
+1 setto major_sync_start
+
+; Токены, полученные в требованиях по обслуживанию(demand)
+integer declare tokens
+
+; Имеет маркер данных
+integer declare has_data_token
+
+; Имеет маркер синхронизации
+integer declare has_sync_token
+
+; Адрес системы A
+integer declare addrA
+
+; Адрес системы B
+integer declare addrB
+
+; Таймер повторного соединения
+integer declare transport_reconnect_timer
+
+; Количество сделанных попыток повторного соединения
+integer declare transport_con_try
+
+; Идет попытка соединения
+integer declare is_connecting
+
+; Таймер задержки между разъединением и соединением
+integer declare transport_discon_delay_timer
+
+; Качество обслуживания
+buffer declare qos
+qos pack 1 1 1 1 2
+
+; Отправляемый пакет транспортного уровня
+buffer declare packet
+
+; тип входящего пакета
+integer declare type
+
+; входящие данные
+buffer declare data
+
+; Контрольная сумма исходящего пакета
+integer declare packet_crc
+
+; Накапливаемая контрольная сумма исходящих пакетов для синхронизации
+integer declare crc_sum_out
+
+; Накапливаемая контрольная сумма входящих пакетов для синхронизации
+integer declare crc_sum_in
+
+; Накапливаемая контрольная сумма пакетов, полученная в запросе синхронизации
+integer declare inc_crc_sum
+
+; Исходящая очередь
+queue out_queue declare
+
+; Входящая очередь
+queue in_queue declare
+
+; Количество пакетов во входящей очереди для отправки наверх
+integer declare send_up_count
+
+; Количество пакетов в исходящей очереди для отправки при ресинхронизации
+integer declare send_resync_count
+
+; данные из очереди входящих
+buffer declare data_from_in_queue
+
+; данные из очереди исходящих
+buffer declare data_from_out_queue
+
+; Таймер отправки пакетов из входящей очереди наверх
+integer declare send_from_in_queue_timer
+
+; Таймер отправки пакетов из исходящей очереди при ресинхронизации
+integer declare send_from_out_queue_timer
+
+; Флаг синхронизации
+integer declare sync
+
+; Флаг ресинхронизации
+integer declare resync
+
+; На какой маркер пришел запрос
+integer declare req_token
+
+; Какой маркер получен
+integer declare given_token
+
+; Маркеры после ресинхронизации
+integer declare resync_tokens
+
+; Послан запрос на маркер синхронизации, но маркер еще не получен
+integer declare should_have_data_token
+
+; Отправлен маркер данных на маркер синхронизации, но подтверждение о получении еще не пришло
+integer declare should_have_sync_token
+
+; Идет нормальный разрыв соединения пользователем
+integer declare user_normal_discon
+
+; Таймер сброса переменных при разъединении
+integer declare init_state
+
+; Таймер задержки, чтобы успела закончится доставка данных перед нормальным разъединением
+integer declare normal_discon_wait_timer
+
+; Сколько раз мы будем откладывать нормальный дисконнект
+integer declare normal_discon_wait_times
+
+; Идет безусловный разрыв соединения пользователем
+integer declare user_forced_discon
+
+---
+
+S_CONNECT.REQ
+
+;ut "пришeл запрос S_CONNECT.REQ" 
+$address setto addrB 
+;ut "адрес " $address 
+;npack protection 1 major_sync_start 1 quality 
+;ut "защита " $protection ", синх. " $major_sync_start 
+demand unbufferit tokens 1
+;ut "маркеры " $tokens 
+address $addrB  eventdown T_CONNECT.REQ
+timeevent TIMER_RECONNECT transport_reconnect_timer 260 
+1 setto transport_con_try 
+1 setto is_con_init 
+1 setto is_connecting 
+
+---
+
+S_CONNECT.RESP
+
+;ut "пришел ответ S_CONNECT.RESP" 
+packet pack 2 1 $quality sizeof(quality) sizeof(quality)+1
+userdata $packet  eventdown T_DATA.REQ
+0 setto user_forced_discon
+
+---
+
+S_DATA.REQ
+
+;reak 
+0 setto sync 
+0 setto resync 
+varcrc packet_crc $userdata 
+$crc_sum_out+$packet_crc setto crc_sum_out 
+queue $userdata out_queue
+$has_data_token==0 if no_data_token
+packet pack 3 1 $userdata sizeof(userdata) sizeof(userdata)+1
+userdata $packet  eventdown T_DATA.REQ
+return 
+no_data_token: 
+;reak 
+$should_have_data_token==1 if lost_token
+sendup error 1  S_P_EXCEPTION.IND
+;ut "no data token ! " 
+1 setto should_have_data_token 
+return 
+lost_token: 
+;reak 
+packet pack 6 1 0 1 2
+userdata $packet  eventdown T_DATA.REQ
+
+---
+
+S_EXPEDITED_DATA.REQ
+
+packet pack 9 1 $userdata sizeof(userdata) sizeof(userdata)+1
+userdata $packet  eventdown T_DATA.REQ
+
+---
+
+S_GIVE_TOKENS.REQ
+
+$token==1 if data_token
+$token==2 if sync_token
+data_token: 
+$has_data_token==0 if token_error
+0 setto has_data_token 
+0 setto should_have_data_token 
+goto continue 
+sync_token: 
+$has_sync_token==0 if token_error
+0 setto has_sync_token 
+0 setto should_have_sync_token 
+goto continue 
+continue: 
+packet pack 8 1 $token 1 2
+;_DATA.REQ generatedown userdata $packet 
+userdata $packet  eventdown T_DATA.REQ
+return 
+token_error: 
+;reak 
+sendup error 3  S_P_EXCEPTION.IND
+
+---
+
+S_PLEASE_TOKENS.REQ
+
+;reak 
+;if (($resync) || ($has_data_token) || ($has_sync_token)) give_token 
+(($resync) || (($has_data_token==1) && ($token==1)) || (($has_sync_token==1) && ($token==2))) if give_token
+$token setto req_token 
+packet pack 7 1 $token 1 2
+userdata $packet  eventdown T_DATA.REQ
+;_DATA.REQ generatedown userdata $packet 
+$token==1 if asked_for_data
+$token==2 if asked_for_sync
+asked_for_data: 
+1 setto should_have_data_token 
+return 
+asked_for_sync: 
+1 setto should_have_sync_token 
+return 
+give_token: 
+sendup token $token  S_GIVE_TOKENS.IND
+
+---
+
+S_RELEASE.REQ
+
+;reak 
+1 setto user_normal_discon 
+qcount(out_queue) > 0 if wait
+packet pack 12 1 0 1 2
+userdata $packet  eventdown T_DATA.REQ
+;ut "запрос правильного завершения соединения, исходящих нет, отравляем сразу" 
+return 
+wait: 
+timeevent TIMER_NORMAL_DISCON_INIT normal_discon_wait_timer 250 
+3 setto normal_discon_wait_times 
+;ut "запрос правильного завершения соединения, есть исходящие, ждем-" qcount(out_queue) 
+
+---
+
+S_RELEASE.RESP
+
+qcount(out_queue) > 0 if wait
+address $addrB  eventdown T_DISCONNECT.REQ
+timeevent TIMER_DISCON_VARS_INIT init_state 1 
+;ut "ответ правильного завершения соединения" 
+return 
+wait: 
+timeevent TIMER_NORMAL_DISCON_INIT normal_discon_wait_timer 250 
+3 setto normal_discon_wait_times 
+
+---
+
+S_RESYNCHRONIZE.REQ
+
+;reak 
+packet pack 10 1 $token 1 2
+;_DATA.REQ generatedown userdata $packet 
+userdata $packet  eventdown T_DATA.REQ
+;ut CurrentSystemName () " :маркеры в запросе ресинхронизации " $token 
+0 setto crc_sum_in 
+clearqueue in_queue 
+1 setto resync 
+
+---
+
+S_RESYNCHRONIZE.RESP
+
+packet pack 11 1 $token 1 2
+;_DATA.REQ generatedown userdata $packet 
+userdata $packet  eventdown T_DATA.REQ
+;ut CurrentSystemName () ": маркеры в ответе на ресинхронизацию " $token 
+$token==1 if sync_token
+$token==2 if data_token
+$token==3 if neither
+$token==4 if both
+both: 
+;reak 
+1 setto has_data_token 
+1 setto has_sync_token 
+1 setto should_have_data_token 
+1 setto should_have_sync_token 
+return 
+neither: 
+0 setto has_data_token 
+0 setto has_sync_token 
+0 setto should_have_data_token 
+0 setto should_have_sync_token 
+return 
+data_token: 
+1 setto has_data_token 
+0 setto has_sync_token 
+1 setto should_have_data_token 
+0 setto should_have_sync_token 
+return 
+sync_token: 
+0 setto has_data_token 
+1 setto has_sync_token 
+0 setto should_have_data_token 
+1 setto should_have_sync_token 
+
+---
+
+S_SYNC_MAJOR.REQ
+
+$resync==1 if exit
+$has_sync_token==0 if no_sync_token
+;�тправляем запрос главной синхронизации. Данные-сумма контрольных сумм по всем отправленным userdata 
+packet pack 4 1 $crc_sum_out 1 2
+;_DATA.REQ generatedown userdata $packet 
+userdata $packet  eventdown T_DATA.REQ
+1 setto sync 
+return 
+no_sync_token: 
+;reak 
+$should_have_sync_token==1 if lost_token
+sendup error 2  S_P_EXCEPTION.IND
+;ut "no sync token ! " 
+1 setto should_have_sync_token 
+return 
+lost_token: 
+;reak 
+packet pack 6 1 0 1 2
+userdata $packet  eventdown T_DATA.REQ
+exit: 
+
+---
+
+S_SYNC_MAJOR.RESP
+
+packet pack 5 1 1 1 2
+;_DATA.REQ generatedown userdata $packet 
+userdata $packet  eventdown T_DATA.REQ
+0 setto crc_sum_in 
+
+---
+
+S_U_ABORT.REQ
+
+;reak 
+packet pack 14 1 0 1 2
+userdata $packet  eventdown T_DATA.REQ
+1 setto user_forced_discon 
+
+---
+
+T_CONNECT.CONF
+
+;ut "пришло подтверждение T_CONNECT.CONF" 
+untimer $transport_reconnect_timer 
+;�тправляем параметры требования по обслуживанию (маркеры) 
+packet pack 1 1 $tokens 1 2
+userdata $packet  eventdown T_DATA.REQ
+$tokens==1 if both
+$tokens==2 if neither
+$tokens==3 if data_token
+$tokens==4 if sync_token
+both: 
+1 setto has_data_token 
+1 setto has_sync_token 
+1 setto should_have_data_token 
+1 setto should_have_sync_token 
+return 
+neither: 
+0 setto has_data_token 
+0 setto has_sync_token 
+return 
+data_token: 
+1 setto has_data_token 
+0 setto has_sync_token 
+1 setto should_have_data_token 
+return 
+sync_token: 
+0 setto has_data_token 
+1 setto has_sync_token 
+1 setto should_have_sync_token 
+
+---
+
+T_CONNECT.IND
+
+;ut "пришла индикация T_CONNECT.IND" 
+$address setto addrA 
+address $address  eventdown T_CONNECT.RESP
+
+---
+
+T_DATA.IND
+
+sizeof(userdata) < 2 if exit
+userdata unbufferit type 1 data sizeof(userdata)-1
+$type==1 if param_propose
+$type==2 if param_conf
+$type==3 if userdata
+$type==4 if sync_request
+$type==5 if sync_conf
+$type==6 if sync_error
+$type==7 if token_request
+$type==8 if token_given
+$type==9 if exp_data
+$type==10 if resync_request
+$type==11 if resync_response
+$type==12 if normal_discon_request
+$type==14 if forced_discon_request
+out "неизвестный тип пакета ! " 
+retrurn 
+
+param_propose: 
+;ut "пришла индикация S_CONNECT.IND" 
+sendup address $addrA quality $qos demand $data  S_CONNECT.IND
+data unbufferit tokens 1
+$tokens==1 if neither
+$tokens==2 if both
+$tokens==3 if sync_token
+$tokens==4 if data_token
+both: 
+1 setto has_data_token 
+1 setto has_sync_token 
+1 setto should_have_data_token 
+1 setto should_have_sync_token 
+return 
+neither: 
+0 setto has_data_token 
+0 setto has_sync_token 
+return 
+data_token: 
+1 setto has_data_token 
+0 setto has_sync_token 
+1 setto should_have_data_token 
+return 
+sync_token: 
+0 setto has_data_token 
+1 setto has_sync_token 
+1 setto should_have_sync_token 
+return 
+
+param_conf: 
+;ut "пришло подтверждение S_CONNECT.CONF" 
+sendup quality $data  S_CONNECT.CONF
+untimer $transport_reconnect_timer 
+0 setto is_connecting 
+return 
+
+userdata: 
+varcrc packet_crc $data 
+$crc_sum_in+$packet_crc setto crc_sum_in 
+queue $data in_queue
+return 
+
+sync_request: 
+$sync==1 if exit
+1 setto sync 
+0 setto resync 
+data unbufferit inc_crc_sum 1
+$inc_crc_sum != $crc_sum_in if sync_error
+sendup  S_SYNC_MAJOR.IND
+qcount(in_queue) setto send_up_count 
+timeevent TIMER_SEND_FROM_IN_QUEUE send_from_in_queue_timer 1 
+return 
+
+sync_conf: 
+$sync==0 if exit
+0 setto crc_sum_out 
+clearqueue out_queue 
+sendup  S_SYNC_MAJOR.CONF
+0 setto sync 
+return 
+
+sync_error: 
+;reak 
+sendup error 3  S_P_EXCEPTION.IND
+return 
+
+token_request: 
+data unbufferit req_token 1
+0 setto sync 
+($req_token==1) && ($has_data_token==0) if exit
+($req_token==2) && ($has_sync_token==0) if exit
+sendup token $req_token  S_PLEASE_TOKENS.IND
+;�а случай, если не пришло подтверждение синхронизации, т.к. маркер запрашивается сразу после 
+0 setto crc_sum_out 
+clearqueue out_queue 
+return 
+
+token_given: 
+data unbufferit given_token 1
+($given_token==1) && ($has_data_token==1) if exit
+($given_token==2) && ($has_sync_token==1) if exit
+$given_token==1 if given_data_token
+$given_token==2 if given_sync_token
+given_data_token: 
+$has_data_token==1 if already_has_token
+1 setto has_data_token 
+goto give_token 
+given_sync_token: 
+$has_sync_token==1 if already_has_token
+1 setto has_sync_token 
+goto give_token 
+give_token: 
+sendup token $given_token  S_GIVE_TOKENS.IND
+return 
+already_has_token: 
+;reak 
+sendup error 3  S_P_EXCEPTION.IND
+return 
+
+exp_data: 
+sendup userdata $data  S_EXPEDITED_DATA.IND
+return 
+
+resync_request: 
+$resync==1 if exit
+0 setto crc_sum_out 
+data unbufferit resync_tokens 1
+qcount(out_queue) setto send_resync_count 
+timeevent TIMER_SEND_FROM_OUT_QUEUE send_from_out_queue_timer 1 
+1 setto resync 
+return 
+
+resync_response: 
+$resync==0 if exit
+0 setto sync 
+data unbufferit resync_tokens 1
+sendup token $resync_tokens  S_RESYNCHRONIZE.CONF
+;�сли в системе B не дергать отправку наверх сразу после ресинх., она не пошлет свой блок данных и при 
+;�олучении в следующий раз сразу 2 блоков мы получим потерю и дубликат 
+;ut "посылаем синхронизацию при ресинхронизации" 
+sendup  S_SYNC_MAJOR.IND
+qcount(in_queue) setto send_up_count 
+timeevent TIMER_SEND_FROM_IN_QUEUE send_from_in_queue_timer 1 
+$resync_tokens==1 if resync_data_token
+$resync_tokens==2 if resync_sync_token
+$resync_tokens==3 if resync_both
+$resync_tokens==4 if resync_neither
+resync_both: 
+1 setto has_data_token 
+1 setto has_sync_token 
+1 setto should_have_data_token 
+1 setto should_have_sync_token 
+return 
+resync_neither: 
+0 setto has_data_token 
+0 setto has_sync_token 
+0 setto should_have_data_token 
+0 setto should_have_sync_token 
+return 
+resync_data_token: 
+1 setto has_data_token 
+0 setto has_sync_token 
+1 setto should_have_data_token 
+0 setto should_have_sync_token 
+return 
+resync_sync_token: 
+0 setto has_data_token 
+1 setto has_sync_token 
+0 setto should_have_data_token 
+1 setto should_have_sync_token 
+return 
+
+normal_discon_request: 
+;ut CurrentSystemName () ": пришел запрос упорядоченного разъединения S_RELEASE" 
+1 setto user_normal_discon 
+sendup  S_RELEASE.IND
+return 
+
+forced_discon_request: 
+;ut CurrentSystemName () ": пришел запрос безусловного разъединения S_U_ABORT" 
+sendup  S_U_ABORT.IND
+address $addrA  eventdown T_DISCONNECT.REQ
+timeevent TIMER_DISCON_VARS_INIT init_state 1 
+return 
+exit: 
+
+---
+
+T_DISCONNECT.IND
+
+;ut "пришла индикация дисконнекта T_DISCONNECT.IND" 
+($user_normal_discon==1) || ($user_forced_discon==1) if user_discon
+;reak 
+$is_connecting if exit
+sendup  S_P_ABORT.IND
+timeevent TIMER_DISCON_VARS_INIT init_state 1 
+return 
+user_discon: 
+$user_forced_discon if abort
+sendup  S_RELEASE.CONF
+abort: 
+timeevent TIMER_DISCON_VARS_INIT init_state 1 
+
+exit: 
+
+---
+
+TIMER_DISCON_VARS_INIT
+
+0 setto has_data_token 
+0 setto has_sync_token 
+untimer $transport_reconnect_timer 
+untimer $transport_discon_delay_timer 
+0 setto crc_sum_in 
+0 setto crc_sum_out 
+0 setto inc_crc_sum 
+clearqueue out_queue 
+clearqueue in_queue 
+untimer $send_from_in_queue_timer 
+untimer $send_from_out_queue_timer 
+0 setto sync 
+0 setto resync 
+0 setto should_have_data_token 
+0 setto should_have_sync_token 
+0 setto user_forced_discon 
+0 setto user_normal_discon 
+0 setto init_state 
+untimer $normal_discon_wait_timer 
+0 setto is_connecting 
+
+---
+
+TIMER_DISCONNECT_DELAY
+
+address $addrB  eventdown T_CONNECT.REQ
+timeevent TIMER_RECONNECT transport_reconnect_timer 260 
+
+---
+
+TIMER_NORMAL_DISCON_INIT
+
+$normal_discon_wait_times==0 if stop_try_normal_discon
+qcount(out_queue) > 0 if wait
+$is_con_init==1 if req
+address $addrA  eventdown T_DISCONNECT.REQ
+timeevent TIMER_DISCON_VARS_INIT init_state 1 
+return 
+req: 
+packet pack 12 1 0 1 2
+userdata $packet  eventdown T_DATA.REQ
+return 
+wait: 
+timeevent TIMER_NORMAL_DISCON_INIT normal_discon_wait_timer 250 
+$normal_discon_wait_times-1 setto normal_discon_wait_times 
+return 
+stop_try_normal_discon: 
+$is_con_init==0 if exit
+packet pack 14 1 0 1 2
+userdata $packet  eventdown T_DATA.REQ
+1 setto user_forced_discon 
+exit: 
+
+---
+
+TIMER_RECONNECT
+
+out "RECONNECT"
+$transport_con_try > 3 if stop_try_reconnect
+address $addrB  eventdown T_DISCONNECT.REQ
+timeevent TIMER_DISCONNECT_DELAY transport_discon_delay_timer 25 
+out CurrentSystemName () ": повторная отправка запроса на транспортное соединение " $transport_con_try 
+$transport_con_try+1 setto transport_con_try 
+return 
+stop_try_reconnect: 
+sendup  S_P_ABORT.IND
+
+---
+
+TIMER_SEND_FROM_IN_QUEUE
+
+$send_up_count==0 if all_sent
+dequeue(in_queue) setto data_from_in_queue 
+sendup userdata $data_from_in_queue  S_DATA.IND
+timeevent TIMER_SEND_FROM_IN_QUEUE send_from_in_queue_timer 1 
+$send_up_count-1 setto send_up_count 
+return 
+all_sent: 
+
+---
+
+TIMER_SEND_FROM_OUT_QUEUE
+
+$send_resync_count==0 if all_sent
+dequeue(out_queue) setto data_from_out_queue 
+varcrc packet_crc $data_from_out_queue 
+$crc_sum_out+$packet_crc setto crc_sum_out 
+packet pack 3 1 $data_from_out_queue sizeof(data_from_out_queue) sizeof(data_from_out_queue)+1
+userdata $packet  eventdown T_DATA.REQ
+timeevent TIMER_SEND_FROM_OUT_QUEUE send_from_out_queue_timer 1 
+$send_resync_count-1 setto send_resync_count 
+return 
+all_sent: 
+sendup token $resync_tokens  S_RESYNCHRONIZE.IND
