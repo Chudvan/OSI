@@ -1,0 +1,590 @@
+P_INIT.REQ
+
+integer declare addr
+string declare openBracket
+string declare closeBracket
+buffer declare syntaxBufer
+integer declare syntax
+integer declare otherSyntax
+buffer declare quality_
+buffer declare context_
+integer declare id
+integer declare size
+integer declare packageType
+buffer declare data
+buffer declare tmp
+string declare workString
+string declare sound
+string declare action
+string declare colour
+string declare smell
+string declare endString
+"255" setto endString
+
+integer declare right_now
+integer declare state_1_timer
+
+1 setto right_now
+
+;Идентификаторы синтаксиса
+
+;1 – кодирование с явным указанием длины
+integer declare explicitSize
+1 setto explicitSize
+;2 – кодирование по признаку конца содержимого
+integer declare endOfContent
+2 setto endOfContent
+
+;Типы пакетов/идентификаторы
+
+;packageStructure пакет для отправки структуры (packageType==1)
+integer declare packageStructure
+1 setto packageStructure
+;packageNumber пакет для отправки числа (packageType==2)
+integer declare packageNumber
+2 setto packageNumber
+;packageString пакет для отправки строки (packageType==3)
+integer declare packageString
+3 setto packageString
+;packageBuffer пакет для отправки строки (packageType==4)
+integer declare packageBuffer
+4 setto packageBuffer
+
+;idSound идентификатор для отправки звука (id==10)
+integer declare idSound
+10 setto idSound
+;idAction идентификатор для отправки движения (id==20)
+integer declare idAction
+20 setto idAction
+;idColour идентификатор для отправки цвета (id==30)
+integer declare idColour
+30 setto idColour
+;idSmell идентификатор для отправки запаха (id==40)
+integer declare idSmell
+40 setto idSmell
+
+;packageContext пакет для отправки параметров (packageType==100)
+integer declare packageContext 
+100 setto packageContext 
+;packageContext2 пакет для подтверждения параметров (packageType==101)
+integer declare packageContext2
+101 setto packageContext2
+
+---
+
+P_CONNECT.REQ
+
+;параметры:  address (число), quality (буфер), demand (буфер), context (буфер)
+$address setto addr
+context unbufferit openBracket 1 closeBracket 1 syntaxBufer sizeof(context) - 2
+sizeof(syntaxBufer) == 2 if both
+;sizeof(syntaxBufer) == 1
+syntaxBufer unbufferit syntax 1
+goto continue
+both:
+	3 setto syntax
+continue:
+	out "P " CurrentSystemName() ": P_CONNECT.REQ: " $syntax
+	address $address quality $quality demand $demand eventdown S_CONNECT.REQ
+
+---
+
+P_CONNECT.RESP
+
+;параметры:  address (число), quality (буфер), demand (буфер), context (буфер)
+$address setto addr
+context unbufferit openBracket 1 closeBracket 1 syntaxBufer sizeof(context) - 2
+sizeof(syntaxBufer) == 2 if both
+;sizeof(syntaxBufer) == 1
+syntaxBufer unbufferit syntax 1
+goto continue
+both:
+	3 setto syntax
+continue:
+	out "P " CurrentSystemName() ": P_CONNECT.RESP: " $syntax
+	address $address quality $quality eventdown S_CONNECT.RESP
+
+---
+
+P_DATA.REQ
+
+;параметры:  userdata (буфер)
+userdata unbufferit packageType 1 data sizeof(userdata)-1
+
+$packageType==$packageStructure if processStructure
+$packageType==$packageNumber if processNumber
+$packageType==$packageString if processString
+$packageType==$packageBuffer if processBuffer
+return
+
+processStructure:
+	data unbufferit workString sizeof(data)
+	copy(workString, 3, sizeof(workString)-2) setto workString
+	copy(workString, 1, pos($closeBracket, workString)-1) setto sound
+	copy(workString, sizeof(sound)+3, sizeof(workString)-sizeof(sound)-2) setto workString
+	copy(workString, 1, pos($closeBracket, workString)-1) setto action
+	copy(workString, sizeof(action)+3, sizeof(workString)-sizeof(action)-2) setto workString
+	copy(workString, 1, pos($closeBracket, workString)-1) setto colour
+	copy(workString, sizeof(colour)+3, sizeof(workString)-sizeof(colour)-2) setto workString
+	copy(workString, 1, pos($closeBracket, workString)-1) setto smell
+
+	out "P " CurrentSystemName() ": P_DATA.REQ " $packageType " " $sound " " $action " " $colour " " $smell
+	($syntax == $explicitSize) if explicitSizePack
+	;endOfContentPack
+		data pack $packageStructure 1 1
+		sizeof(data)+sizeof(sound)+sizeof(endString) setto size
+		data pack $data sizeof(data) $idSound 1 $sound sizeof(sound) $endString sizeof(endString) $size+1
+		sizeof(data)+sizeof(action)+sizeof(endString) setto size
+		data pack $data sizeof(data) $idAction 1 $action sizeof(action) $endString sizeof(endString) $size+1
+		sizeof(data)+sizeof(colour)+sizeof(endString) setto size
+		data pack $data sizeof(data) $idColour 1 $colour sizeof(colour) $endString sizeof(endString) $size+1
+		sizeof(data)+sizeof(smell)+sizeof(endString) setto size
+		data pack $data sizeof(data) $idSmell 1 $smell sizeof(smell) $endString sizeof(endString) $size+1
+		data pack $data sizeof(data) $endString sizeof(endString) sizeof(data)+sizeof(endString)
+		goto sendPacket
+	explicitSizePack:
+		sizeof(sound)+sizeof(action)+sizeof(colour)+sizeof(smell)+2*4 setto size
+		data pack $packageStructure 1 $size 1 2
+		data pack $data sizeof(data) $idSound 1 sizeof(sound) 1 $sound sizeof(sound) sizeof(data)+sizeof(sound)+2
+		data pack $data sizeof(data) $idAction 1 sizeof(action) 1 $action sizeof(action) sizeof(data)+sizeof(action)+2
+		data pack $data sizeof(data) $idColour 1 sizeof(colour) 1 $colour sizeof(colour) sizeof(data)+sizeof(colour)+2
+		data pack $data sizeof(data) $idSmell 1 sizeof(smell) 1 $smell sizeof(smell) sizeof(data)+sizeof(smell)+2
+		goto sendPacket
+
+processNumber:
+processString:
+processBuffer:
+	out "P " CurrentSystemName() ": P_DATA.REQ " $packageType
+	data pack $userdata sizeof(userdata) sizeof(userdata)
+	goto sendPacket
+
+sendPacket:
+	userdata $data eventdown S_DATA.REQ
+	return
+
+---
+
+P_EXPEDITED_DATA.REQ
+
+;параметры:  userdata (буфер)
+userdata unbufferit packageType 1 data sizeof(userdata)-1
+
+$packageType==$packageStructure if processStructure
+$packageType==$packageNumber if processNumber
+$packageType==$packageString if processString
+$packageType==$packageBuffer if processBuffer
+return
+
+processStructure:
+	data unbufferit workString sizeof(data)
+	copy(workString, 3, sizeof(workString)-2) setto workString
+	copy(workString, 1, pos($closeBracket, workString)-1) setto sound
+	copy(workString, sizeof(sound)+3, sizeof(workString)-sizeof(sound)-2) setto workString
+	copy(workString, 1, pos($closeBracket, workString)-1) setto action
+	copy(workString, sizeof(action)+3, sizeof(workString)-sizeof(action)-2) setto workString
+	copy(workString, 1, pos($closeBracket, workString)-1) setto colour
+	copy(workString, sizeof(colour)+3, sizeof(workString)-sizeof(colour)-2) setto workString
+	copy(workString, 1, pos($closeBracket, workString)-1) setto smell
+
+	out "P " CurrentSystemName() ": P_EXPEDITED_DATA.REQ " $packageType " " $sound " " $action " " $colour " " $smell
+	($syntax == $explicitSize) if explicitSizePack
+	;endOfContentPack
+		data pack $packageStructure 1 1
+		sizeof(data)+sizeof(sound)+sizeof(endString) setto size
+		data pack $data sizeof(data) $idSound 1 $sound sizeof(sound) $endString sizeof(endString) $size+1
+		sizeof(data)+sizeof(action)+sizeof(endString) setto size
+		data pack $data sizeof(data) $idAction 1 $action sizeof(action) $endString sizeof(endString) $size+1
+		sizeof(data)+sizeof(colour)+sizeof(endString) setto size
+		data pack $data sizeof(data) $idColour 1 $colour sizeof(colour) $endString sizeof(endString) $size+1
+		sizeof(data)+sizeof(smell)+sizeof(endString) setto size
+		data pack $data sizeof(data) $idSmell 1 $smell sizeof(smell) $endString sizeof(endString) $size+1
+		data pack $data sizeof(data) $endString sizeof(endString) sizeof(data)+sizeof(endString)
+		goto sendPacket
+	explicitSizePack:
+		sizeof(sound)+sizeof(action)+sizeof(colour)+sizeof(smell)+2*4 setto size
+		data pack $packageStructure 1 $size 1 2
+		data pack $data sizeof(data) $idSound 1 sizeof(sound) 1 $sound sizeof(sound) sizeof(data)+sizeof(sound)+2
+		data pack $data sizeof(data) $idAction 1 sizeof(action) 1 $action sizeof(action) sizeof(data)+sizeof(action)+2
+		data pack $data sizeof(data) $idColour 1 sizeof(colour) 1 $colour sizeof(colour) sizeof(data)+sizeof(colour)+2
+		data pack $data sizeof(data) $idSmell 1 sizeof(smell) 1 $smell sizeof(smell) sizeof(data)+sizeof(smell)+2
+		goto sendPacket
+
+processNumber:
+processString:
+processBuffer:
+	out "P " CurrentSystemName() ": P_EXPEDITED_DATA.REQ " $packageType
+	data pack $userdata sizeof(userdata) sizeof(userdata)
+	goto sendPacket
+
+sendPacket:
+	userdata $data eventdown S_EXPEDITED_DATA.REQ
+	return
+
+---
+
+P_GIVE_TOKENS.REQ
+
+;параметры:  token (число)
+out "P " CurrentSystemName() ": P_GIVE_TOKENS.REQ: "
+eventdown token $token S_GIVE_TOKENS.REQ
+
+---
+
+P_PLEASE_TOKENS.REQ
+
+;параметры:  token (число)
+out "P " CurrentSystemName() ": P_PLEASE_TOKENS.REQ: "
+eventdown token $token S_PLEASE_TOKENS.REQ
+
+---
+
+P_RELEASE.REQ
+
+;параметры:  нет
+out "P " CurrentSystemName() ": P_RELEASE.REQ: "
+eventdown S_RELEASE.REQ
+
+---
+
+P_RELEASE.RESP
+
+;параметры:  нет
+out "P " CurrentSystemName() ": P_RELEASE.RESP: "
+eventdown S_RELEASE.RESP
+timeevent TIMER_STATE_1 state_1_timer $right_now
+
+---
+
+P_RESYNCHRONIZE.REQ
+
+;параметры:  token (число)
+out "P " CurrentSystemName() ": P_RESYNCHRONIZE.REQ: "
+eventdown token $token S_RESYNCHRONIZE.REQ
+
+---
+
+P_RESYNCHRONIZE.RESP
+
+;параметры:  token (число)
+out "P " CurrentSystemName() ": P_RESYNCHRONIZE.RESP: "
+eventdown token $token S_RESYNCHRONIZE.RESP
+
+---
+
+P_SYNC_MAJOR.REQ
+
+;параметры:  нет
+out "P " CurrentSystemName() ": P_SYNC_MAJOR.REQ: "
+eventdown S_SYNC_MAJOR.REQ
+
+---
+
+P_SYNC_MAJOR.RESP
+
+;параметры:  нет
+out "P " CurrentSystemName() ": P_SYNC_MAJOR.RESP: "
+eventdown S_SYNC_MAJOR.RESP
+
+---
+
+P_U_ABORT.REQ
+
+;параметры:  нет
+out "P " CurrentSystemName() ": P_U_ABORT.REQ: "
+eventdown S_U_ABORT.REQ
+timeevent TIMER_STATE_1 state_1_timer $right_now 
+
+---
+
+S_CONNECT.CONF
+
+;параметры:  quality (буфер)
+$quality setto quality_
+data pack $packageContext 1 $syntax 1 2
+userdata $data eventdown S_EXPEDITED_DATA.REQ
+
+---
+
+S_CONNECT.IND
+
+;параметры:  address (число), quality (буфер), demand (буфер)
+sendup address $address quality $quality demand $demand P_CONNECT.IND
+
+---
+
+S_DATA.IND
+
+;параметры:  userdata (буфер)
+userdata unbufferit packageType 1 data sizeof(userdata)-1
+
+$packageType==$packageStructure if processStructure
+$packageType==$packageNumber if processNumber
+$packageType==$packageString if processString
+$packageType==$packageBuffer if processBuffer
+return
+
+processStructure:
+	($syntax == $explicitSize) if explicitSizeUnpack
+	;endOfContentUnpack:
+		endOfContentUnpackIds:
+			data unbufferit id 1 workString sizeof(data)-1
+			pos($endString, workString)-1 setto size
+			$id==$idSound if sound
+			$id==$idAction if action
+			$id==$idColour if colour
+			$id==$idSmell if smell
+			return
+			sound:
+				data unbufferit id 1 sound $size tmp sizeof(endString) data sizeof(data)-$size-sizeof(endString)-1
+				goto endOfContentUnpackIds
+			action:
+				data unbufferit id 1 action $size tmp sizeof(endString) data sizeof(data)-$size-sizeof(endString)-1
+				goto endOfContentUnpackIds
+			colour:
+				data unbufferit id 1 colour $size tmp sizeof(endString) data sizeof(data)-$size-sizeof(endString)-1
+				goto endOfContentUnpackIds
+			smell:
+				data unbufferit id 1 smell $size tmp sizeof(endString) data sizeof(data)-$size-sizeof(endString)-1
+				goto packStructure
+	explicitSizeUnpack:
+		data unbufferit size 1 data sizeof(data)-1
+		explicitSizeUnpackIds:
+			data unbufferit id 1 size 1 data sizeof(data)-2
+			$id==$idSound if saveSound
+			$id==$idAction if saveAction
+			$id==$idColour if saveColour
+			$id==$idSmell if saveSmell
+			return
+			saveSound:
+				data unbufferit sound $size data sizeof(data)-$size
+				goto explicitSizeUnpackIds
+			saveAction:
+				data unbufferit action $size data sizeof(data)-$size
+				goto explicitSizeUnpackIds
+			saveColour:
+				data unbufferit colour $size data sizeof(data)-$size
+				goto explicitSizeUnpackIds
+			saveSmell:
+				data unbufferit smell $size data sizeof(data)-$size
+				goto packStructure
+	packStructure:
+		out "P " CurrentSystemName() ": S_DATA.IND " $packageType " " $sound " " $action " " $colour " " $smell
+		$openBracket+$sound+$closeBracket setto workString
+		$workString+$openBracket+$action+$closeBracket setto workString
+		$workString+$openBracket+$colour+$closeBracket setto workString
+		$workString+$openBracket+$smell+$closeBracket setto workString
+		$openBracket+$workString+$closeBracket setto workString
+		out "P " CurrentSystemName() ": S_DATA.IND " $packageType " " $workString
+		data pack $workString sizeof(workString) sizeof(workString)
+		data pack $packageStructure 1 $data sizeof(data) sizeof(data)+1
+		goto sendupPacket
+
+processNumber:
+processString:
+processBuffer:
+	data pack $userdata sizeof(userdata) sizeof(userdata)
+	goto sendupPacket
+
+sendupPacket:
+	sendup userdata $data P_DATA.IND
+	return
+
+---
+
+S_EXPEDITED_DATA.IND
+
+;параметры:  userdata (буфер)
+userdata unbufferit packageType 1 data sizeof(userdata)-1
+
+(($packageType==$packageContext) || ($packageType==$packageContext2)) if no_debug
+	out "P " CurrentSystemName() ": S_EXPEDITED_DATA.IND " $packageType
+
+no_debug:
+	$packageType==$packageContext if contextInd
+	$packageType==$packageContext2 if contextResp
+	$packageType==$packageStructure if processStructure
+	$packageType==$packageNumber if processNumber
+	$packageType==$packageString if processString
+	$packageType==$packageBuffer if processBuffer
+	return
+
+contextInd:
+	data unbufferit otherSyntax 1
+	$syntax & $otherSyntax setto syntax
+	$syntax != 3 if continue
+		1 setto syntax
+	continue:
+		out "P " CurrentSystemName() ": S_EXPEDITED_DATA.IND: contextInd" $packageType " " $syntax
+		data pack $packageContext2 1 $syntax 1 2
+		userdata $data eventdown S_EXPEDITED_DATA.REQ
+		return
+
+contextResp:
+	data unbufferit otherSyntax 1
+	$otherSyntax setto syntax
+	out "P " CurrentSystemName() ": S_EXPEDITED_DATA.IND: contextResp" $packageType " " $syntax
+	context_ pack $openBracket 1 $closeBracket 1 $syntax 1 3
+	sendup quality $quality_ context $context_ P_CONNECT.CONF
+	return
+
+processStructure:
+	($syntax == $explicitSize) if explicitSizeUnpack
+	;endOfContentUnpack:
+		endOfContentUnpackIds:
+			data unbufferit id 1 workString sizeof(data)-1
+			pos($endString, workString)-1 setto size
+			$id==$idSound if sound
+			$id==$idAction if action
+			$id==$idColour if colour
+			$id==$idSmell if smell
+			return
+			sound:
+				data unbufferit id 1 sound $size tmp sizeof(endString) data sizeof(data)-$size-sizeof(endString)-1
+				goto endOfContentUnpackIds
+			action:
+				data unbufferit id 1 action $size tmp sizeof(endString) data sizeof(data)-$size-sizeof(endString)-1
+				goto endOfContentUnpackIds
+			colour:
+				data unbufferit id 1 colour $size tmp sizeof(endString) data sizeof(data)-$size-sizeof(endString)-1
+				goto endOfContentUnpackIds
+			smell:
+				data unbufferit id 1 smell $size tmp sizeof(endString) data sizeof(data)-$size-sizeof(endString)-1
+				goto packStructure
+	explicitSizeUnpack:
+		data unbufferit size 1 data sizeof(data)-1
+		explicitSizeUnpackIds:
+			data unbufferit id 1 size 1 data sizeof(data)-2
+			$id==$idSound if saveSound
+			$id==$idAction if saveAction
+			$id==$idColour if saveColour
+			$id==$idSmell if saveSmell
+			return
+			saveSound:
+				data unbufferit sound $size data sizeof(data)-$size
+				goto explicitSizeUnpackIds
+			saveAction:
+				data unbufferit action $size data sizeof(data)-$size
+				goto explicitSizeUnpackIds
+			saveColour:
+				data unbufferit colour $size data sizeof(data)-$size
+				goto explicitSizeUnpackIds
+			saveSmell:
+				data unbufferit smell $size data sizeof(data)-$size
+				goto packStructure
+	packStructure:
+		out "P " CurrentSystemName() ": S_DATA.IND " $packageType " " $sound " " $action " " $colour " " $smell
+		$openBracket+$sound+$closeBracket setto workString
+		$workString+$openBracket+$action+$closeBracket setto workString
+		$workString+$openBracket+$colour+$closeBracket setto workString
+		$workString+$openBracket+$smell+$closeBracket setto workString
+		$openBracket+$workString+$closeBracket setto workString
+		out "P " CurrentSystemName() ": S_DATA.IND " $packageType " " $workString
+		data pack $workString sizeof(workString) sizeof(workString)
+		data pack $packageStructure 1 $data sizeof(data) sizeof(data)+1
+		goto sendupPacket
+
+processNumber:
+processString:
+processBuffer:
+	data pack $userdata sizeof(userdata) sizeof(userdata)
+	goto sendupPacket
+
+sendupPacket:
+	sendup userdata $data P_EXPEDITED_DATA.IND
+	return
+
+---
+
+S_GIVE_TOKENS.IND
+
+;параметры:  token (число)
+out "P " CurrentSystemName() ": S_GIVE_TOKENS.IND: "
+sendup token $token P_GIVE_TOKENS.IND
+
+---
+
+S_P_ABORT.IND
+
+;параметры:  нет
+out "P " CurrentSystemName() ": S_P_ABORT.IND: "
+sendup P_P_ABORT.IND
+
+---
+
+S_P_EXCEPTION.IND
+
+;параметры:  error (число)
+out "P " CurrentSystemName() ": S_P_EXCEPTION.IND: "
+sendup error $error P_P_EXCEPTION.INDD
+
+---
+
+S_PLEASE_TOKENS.IND
+
+;параметры:  token (число)
+out "P " CurrentSystemName() ": S_PLEASE_TOKENS.IND: "
+sendup token $token P_PLEASE_TOKENS.IND
+
+---
+
+S_RELEASE.CONF
+
+;параметры:  нет
+out "P " CurrentSystemName() ": S_RELEASE.CONF: "
+sendup P_RELEASE.CONF
+timeevent TIMER_STATE_1 state_1_timer $right_now
+
+---
+
+S_RELEASE.IND
+
+;параметры:  нет
+out "P " CurrentSystemName() ": S_RELEASE.IND: "
+sendup P_RELEASE.IND
+
+---
+
+S_RESYNCHRONIZE.CONF
+
+;параметры:  token (число)
+out "P " CurrentSystemName() ": S_RESYNCHRONIZE.CONF: "
+sendup token $token P_RESYNCHRONIZE.CONF 
+
+---
+
+S_RESYNCHRONIZE.IND
+
+;параметры:  token (число)
+out "P " CurrentSystemName() ": S_RESYNCHRONIZE.IND: "
+sendup token $token P_RESYNCHRONIZE.IND
+
+---
+
+S_SYNC_MAJOR.CONF
+
+;параметры:  нет
+out "P " CurrentSystemName() ": S_SYNC_MAJOR.CONF: "
+sendup P_SYNC_MAJOR.CONF
+
+---
+
+S_SYNC_MAJOR.IND
+
+;параметры:  нет
+out "P " CurrentSystemName() ": S_SYNC_MAJOR.IND: "
+sendup P_SYNC_MAJOR.IND
+
+---
+
+S_U_ABORT.IND
+
+;параметры:  нет
+out "P " CurrentSystemName() ": S_U_ABORT.IND: "
+sendup P_U_ABORT.IND
+timeevent TIMER_STATE_1 state_1_timer $right_now
+
+---
+
+TIMER_STATE_1
+
+out "P " CurrentSystemName() ": TIMER_STATE_1"
