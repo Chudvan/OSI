@@ -1,0 +1,411 @@
+A_INIT.REQ
+
+string declare aNamer
+string declare aNamei
+buffer declare aNamerBuf
+buffer declare aNameiBuf
+buffer declare aContext
+buffer declare aQuality
+buffer declare aDemand
+string declare aApcon
+integer declare resolveType
+integer declare packageType
+buffer declare data
+integer declare aAddress
+buffer declare aAddressBuf
+integer declare timeStart
+integer declare timeStop
+string declare changeFrom
+string declare changeTo
+buffer declare packageBuffer
+queue packageQueue declare
+integer declare askedForToken
+
+integer declare resolveReqTimer
+integer declare resolveIndTimer
+integer declare associateReqTimer
+integer declare associateIndTimer
+integer declare associateRespTimer
+integer declare associateConfTimer
+integer declare releaseReqTimer
+integer declare releaseIndTimer
+integer declare releaseRespTimer
+integer declare releaseConfTimer
+integer declare terminateReqTimer
+integer declare terminateRespTimer
+integer declare syncTimer
+
+---
+
+A_ASSOCIATE.CONF
+
+;параметры:  address (число), quality (буфер), demand (буфер), context (буфер)
+out "A " CurrentSystemName() ": A_ASSOCIATE.CONF"
+0 setto associateConfTimer 
+$aApcon=="GS" if gs
+$aApcon=="DT" if dt
+	out "AAAAAAAAAAAAAAAAAAA"
+	goto done
+gs:
+packageBuffer pack 3 1 $aNamer sizeof(aNamer) sizeof(aNamer)+1
+userdata $packageBuffer eventdown P_DATA.REQ
+	out "gd P_DATA.REQ"
+timeevent A_SYNC_MAJOR_TIMER syncTimer 1 
+	goto done
+dt:
+sendup context $context quality $quality  A_TRANSFER_INIT.CONF
+	goto done
+done:
+
+---
+
+A_ASSOCIATE.IND
+
+;параметры: namei (буфер), quality (буфер), apcon (строка)
+out "A " CurrentSystemName() ": A_ASSOCIATE.IND"
+0 setto associateIndTimer 
+sendup namei $aNamei quality $quality  A_TRANSFER_INIT.IND
+
+---
+
+A_ASSOCIATE.REQ
+
+;параметры: namer (буфер), namei (буфер), quality (буфер), demand (буфер), context (буфер), apcon (строка)
+out "A " CurrentSystemName() ": A_ASSOCIATE.REQ"
+0 setto associateReqTimer 
+$apcon setto aApcon
+address $aAddress quality $quality demand $demand context $context eventdown P_CONNECT.REQ
+
+---
+
+A_ASSOCIATE.RESP
+
+;параметры: namei (буфер), context (буфер), quality (буфер), apcon (строка)
+out "A " CurrentSystemName() ": A_ASSOCIATE.RESP"
+0 setto associateRespTimer
+address $aAddress quality $quality context $context eventdown P_CONNECT.RESP
+
+---
+
+A_DATA.REQ
+
+out "A " CurrentSystemName() ": A_DATA.REQ"
+queue $userdata packageQueue
+$askedForToken==1 if done
+; else-ask for token
+	out "PLEASE_TOKENS.REQ"
+token 1 eventdown P_PLEASE_TOKENS.REQ
+	1 setto askedForToken
+	goto done
+done:
+
+---
+
+A_RELEASE.CONF
+
+out "A " CurrentSystemName() ": A_RELEASE.CONF"
+0 setto releaseConfTimer 
+$apcon=="GS" if gs
+$apcon=="DT" if dt
+	out "AAAAAAAAAAAAAAAAAAAA"
+	goto done
+gs:
+aAddressBuf pack $resolveType 1 $aAddress 1 $changeFrom 1 $changeTo 1 4
+timeevent A_RESOLVE.IND resolveIndTimer 0 address $aAddressBuf 
+	goto done
+dt:
+sendup address $aAddress  A_TERMINATE.CONF
+	goto done
+done:
+
+---
+
+A_RELEASE.IND
+
+out "A " CurrentSystemName() ": A_RELEASE.IND"
+0 setto releaseIndTimer 
+sendup  A_TERMINATE.IND
+
+---
+
+A_RELEASE.REQ
+
+out "A " CurrentSystemName() ": A_RELEASE.RESP"
+0 setto releaseRespTimer 
+ eventdown P_RELEASE.RESP
+
+---
+
+A_RELEASE.RESP
+
+;параметры: apcon (строка)
+out "A " CurrentSystemName()+" A_RELEASE.RESP" 
+"" setto apcon_
+P_RELEASE.RESP eventdown 
+
+---
+
+A_RESOLVE.IND
+
+;параметры: address (буфер)
+out "A " CurrentSystemName() ": A_RESOLVE.IND"
+0 setto resolveIndTimer
+address unbufferit resolveType 1 aAddress 1 changeFrom 1 changeTo 1
+aNamerBuf pack $aNamer sizeof(aNamer) $aAddress 1 sizeof(aNamer)+1
+timeevent A_ASSOCIATE.REQ associateReqTimer 0 namer $aNamer namei $aNameiBuf quality $aQuality demand $aDemand context $aContext apcon "DT" 
+
+---
+
+A_RESOLVE.REQ
+
+out "A " CurrentSystemName() ": A_RESOLVE.REQ"
+0 setto resolveReqTimer 
+locguide($name) setto data
+data unbufferit resolveType 1 aAddress 1 timeStart 1 timeStop 1 changeFrom 1 changeTo 1
+;out $resolveType 
+;out $aAddress 
+;out $timeStart 
+;out $timeStop 
+;out $changeFrom 
+;out $changeTo
+$resolveType==3 if notFound
+goto done
+notFound:
+	locguide("Guide") setto data
+data unbufferit resolveType 1 aAddress 1 timeStart 1 timeStop 1 changeFrom 1 changeTo 1
+	; global DNS is always known, so don't check the type
+	; give both tokens to us
+aDemand pack 1 1 1
+aNamerBuf pack "Guide" 5 $aAddress 1 6
+aNameiBuf pack $aNamei sizeof(aNamei) locguide($aNamei) 1 sizeof(aNamei)+1
+timeevent A_ASSOCIATE.REQ associateReqTimer 0 namer $aNamerBuf namei $aNameiBuf quality $aQuality demand $aDemand context $aContext apcon "GS" 
+	goto done
+done:
+
+---
+
+A_SYNC_MAJOR_TIMER
+
+out "A " CurrentSystemName() ": A_SYNC_MAJOR_TIMER"
+0 setto syncTimer
+ eventdown P_SYNC_MAJOR.REQ
+
+---
+
+A_TERMINATE.CONF
+
+// его нет...
+
+---
+
+A_TERMINATE.REQ
+
+;параметры: нет
+out "A " CurrentSystemName() ": A_TERMINATE.REQ"
+timeevent A_RELEASE.REQ releaseReqTimer 0 apcon $aApcon 
+
+---
+
+A_TERMINATE.RESP
+
+out "A " CurrentSystemName() ": A_TERMINATE.RESP"
+0 setto terminateRespTimer 
+timeevent A_RELEASE.RESP releaseRespTimer 0 apron "DT" 
+
+---
+
+A_TRANSFER_INIT.REQ
+
+out "A " CurrentSystemName() ": A_TRANSFER_INIT.REQ"
+$namer setto aNamer
+$namei setto aNamei
+$context setto aContext
+$quality setto aQuality
+timeevent A_RESOLVE.REQ resolveReqTimer 0 name $namer 
+
+---
+
+A_TRANSFER_INIT.RESP
+
+;параметры: namei (строка), context (буфер), quality (буфер)
+out "A " CurrentSystemName() ": A_TRANSFER_INIT.RESP"
+timeevent A_ASSOCIATE.RESP associateRespTimer 0 namei $aNameiBuf context $context quality $quality apcon "DT" 
+
+---
+
+CONN_TO_OTHER
+
+// нет такого...
+
+---
+
+A_U_ABORT.REQ
+
+;параметры: apcon (строка)
+out "A " CurrentSystemName() ": A_U_ABORT.REQ"
+ eventdown P_U_ABORT.REQ
+ 
+---
+
+P_CONNECT.CONF
+
+out "A " CurrentSystemName() ": P_CONNECT.CONF"
+timeevent A_ASSOCIATE.CONF associateConfTimer 0 context $aContext quality $aQuality demand $aDemand 
+
+---
+
+P_CONNECT.IND
+
+;параметры:  address (число), quality (буфер), demand (буфер)
+out "A " CurrentSystemName() ": P_CONNECT.IND"
+$address setto aAddress
+locguide($address) setto aNamei
+aNameiBuf pack $address 1 $aNamei sizeof(aNamei) sizeof(aNamei)+1
+timeevent A_ASSOCIATE.IND associateIndTimer 1 namei $aNameiBuf quality $quality demand $demand 
+
+---
+
+P_DATA.IND
+
+;параметры:  userdata (буфер)
+out "A " CurrentSystemName() ": P_DATA.IND"
+$aApcon=="GS" if gs
+; else-normal data
+	out "A_DATA.IND"
+sendup userdata $userdata  A_DATA.IND
+	goto done
+gs:
+	out "gs"
+userdata unbufferit packageType 1 resolveType 1 aAddress 1 timeStart 1 timeStop 1 changeFrom 1 changeTo 1
+	;out $resolveType 
+	;out $aAddress 
+	;out $timeStart 
+	;out $timeStop 
+	;out $changeFrom 
+	;out $changeTo
+$resolveType==0 if gotAddress
+		out "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+		goto done
+	gotAddress:
+timeevent A_RELEASE.REQ releaseReqTimer 0 apcon "GS" 
+		goto done
+done:
+
+---
+
+P_GIVE_TOKENS.IND
+
+;параметры:  token (число)
+out "A " CurrentSystemName() ": P_GIVE_TOKENS.IND"
+$token==1 if sendPackage
+$token==2 if sync
+sendPackage:
+qcount(packageQueue)==0 if askForToken
+	; else
+userdata dequeue(packageQueue) eventdown P_DATA.REQ
+		out "gd P_DATA.REQ"
+		goto sendPackage
+	askForToken:
+	0 setto askedForToken
+token 2 eventdown P_PLEASE_TOKENS.REQ
+	goto done
+sync:
+ eventdown P_SYNC_MAJOR.REQ
+	goto done
+done:
+
+---
+
+P_P_ABORT.IND
+
+;параметры:  нет
+out "A " CurrentSystemName() ": P_P_ABORT.IND"
+sendup apcon $aApcon  A_P_ABORT.IND
+
+---
+
+P_P_EXCEPTION.IND
+
+;параметры:  error (число)
+;параметры:  error (число)
+out "A " CurrentSystemName() ": P_P_EXCEPTION.IND"
+($error==1) if needDataMarker
+($error==2) if needSyncMarker
+($error==3) if needResync
+out "p_pe.i : unexpected error"
+goto end
+
+needDataMarker:
+token 1 eventdown P_GIVE_TOKENS.REQ
+goto end
+
+needSyncMarker:
+token 1 eventdown P_GIVE_TOKENS.REQ
+goto end
+
+needResync:
+token 4 eventdown P_RESYNCHRONIZE.REQ
+goto end
+
+
+end:
+
+---
+
+P_PLEASE_TOKENS.IND
+
+;параметры:  token (число)
+out "A " CurrentSystemName() ": P_PLEASE_TOKENS.IND"
+token $token eventdown P_GIVE_TOKENS.REQ
+
+---
+
+P_RELEASE.CONF
+
+;параметры:  нет
+out "A " CurrentSystemName() ": P_RELEASE.CONF"
+timeevent A_RELEASE.CONF releaseConfTimer 0 apcon $aApcon 
+
+---
+
+P_RELEASE.IND
+
+;параметры:  нет
+out "A " CurrentSystemName() ": P_RELEASE.IND"
+timeevent A_RELEASE.IND releaseIndTimer 0 apcon "DT" 
+
+---
+
+P_RESYNCHRONIZE.CONF
+
+;параметры:  token (число)
+out "A " CurrentSystemName() ": P_RESYNCHRONIZE.CONF"
+
+---
+
+P_RESYNCHRONIZE.IND
+
+;параметры:  token (число)
+out "A " CurrentSystemName() ": P_RESYNCHRONIZE.IND"
+
+---
+
+P_SYNC_MAJOR.CONF
+
+;параметры:  нет
+out "A " CurrentSystemName() ": P_SYNC_MAJOR.CONF"
+
+---
+
+P_SYNC_MAJOR.IND
+
+;параметры:  нет
+out "A " CurrentSystemName() ": P_SYNC_MAJOR.IND"
+ eventdown P_SYNC_MAJOR.RESP
+
+---
+
+P_U_ABORT.IND
+
+;параметры:  нет
+out "A " CurrentSystemName() ": P_U_ABORT.IND"
